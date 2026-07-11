@@ -59,6 +59,19 @@ jobs:
         run: |
           $apk = "android\app\build\outputs\apk\debug\app-debug.apk"
           if (-not (Test-Path $apk)) { throw "APK not found: $apk" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk))
+          try {
+            $abis = $archive.Entries.FullName |
+              Where-Object { $_ -match "^lib/[^/]+/" } |
+              ForEach-Object { ($_ -split "/")[1] } |
+              Sort-Object -Unique
+          } finally {
+            $archive.Dispose()
+          }
+          if ($abis.Count -ne 1 -or $abis[0] -ne "arm64-v8a") {
+            throw "Expected only arm64-v8a native libraries, found: $($abis -join ', ')"
+          }
           Get-FileHash $apk -Algorithm SHA256
 
       - name: Upload APK

@@ -1,6 +1,7 @@
 .agents/
 .codex/
 .superpowers/
+.tools/
 outputs/
 work/
 app.db

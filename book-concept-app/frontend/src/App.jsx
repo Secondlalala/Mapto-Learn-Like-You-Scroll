@@ -1,0 +1,90 @@
+import { useEffect, useState } from "react";
+import { ArrowLeft, BookOpen, KeyRound, Library } from "lucide-react";
+import { api } from "./api/client";
+import UploadPage from "./pages/UploadPage";
+import BookPage from "./pages/BookPage";
+import CardReaderPage from "./pages/CardReaderPage";
+import DeepSeekSettings from "./components/DeepSeekSettings";
+
+export default function App() {
+  const [route, setRoute] = useState({ name: "upload" });
+  const [books, setBooks] = useState([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const refreshBooks = async () => {
+    try {
+      setBooks(await api.listBooks());
+    } catch {
+      setBooks([]);
+    }
+  };
+
+  useEffect(() => {
+    refreshBooks();
+  }, []);
+
+  return (
+    <main className="min-h-screen">
+      <header className="fixed left-0 right-0 top-0 z-20 border-b border-stone-200 bg-[#f7f5ef]/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
+          <button
+            className="flex items-center gap-2 text-sm font-semibold text-stone-900"
+            onClick={() => setRoute({ name: "upload" })}
+          >
+            <BookOpen size={18} />
+            AI 书籍概念学习
+          </button>
+          <div className="flex items-center gap-2">
+            {route.name !== "upload" && (
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-300 px-3 text-sm hover:bg-white"
+                onClick={() => setRoute({ name: "upload" })}
+              >
+                <ArrowLeft size={16} />
+                返回
+              </button>
+            )}
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-300 px-3 text-sm hover:bg-white"
+              onClick={() => setSettingsOpen(true)}
+              title="DeepSeek 与语音设置"
+            >
+              <KeyRound size={16} />
+              设置
+            </button>
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-stone-900 px-3 text-sm text-white"
+              onClick={() => setRoute({ name: "upload" })}
+              title="书库"
+            >
+              <Library size={16} />
+              {books.length}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="pt-14">
+        {route.name === "upload" && (
+          <UploadPage
+            books={books}
+            onUploaded={async (bookId) => {
+              await refreshBooks();
+              setRoute({ name: "book", bookId });
+            }}
+            onOpenBook={(bookId) => setRoute({ name: "book", bookId })}
+          />
+        )}
+        {route.name === "book" && (
+          <BookPage
+            bookId={route.bookId}
+            onRead={(bookId) => setRoute({ name: "reader", bookId })}
+          />
+        )}
+        {route.name === "reader" && <CardReaderPage bookId={route.bookId} />}
+      </div>
+
+      <DeepSeekSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+    </main>
+  );
+}

@@ -1,0 +1,20 @@
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=sqlite:///./data/app.db
+      - UPLOAD_DIR=data/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
+  frontend:
+    build: ./frontend
+    environment:
+      - VITE_API_BASE=http://localhost:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend

@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f7f5ef;
+  color: #17202a;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.reader-scroll {
+  scroll-snap-type: y mandatory;
+}
+
+.reader-card {
+  scroll-snap-align: start;
+}
+

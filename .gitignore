@@ -1,0 +1,10 @@
+.agents/
+.codex/
+.superpowers/
+outputs/
+work/
+app.db
+book-concept-app/build/
+book-concept-app/logs/
+book-concept-app/backend/logs/
+book-concept-app/backend/tts_cache/

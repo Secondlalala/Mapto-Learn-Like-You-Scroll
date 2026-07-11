@@ -1,0 +1,11 @@
+.env
+*.db
+*.sqlite
+__pycache__/
+*.py[cod]
+.venv/
+uploads/
+runtime_settings.json
+node_modules/
+dist/
+.DS_Store

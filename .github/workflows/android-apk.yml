@@ -42,7 +42,12 @@ jobs:
       - name: Install Android SDK packages
         shell: pwsh
         run: |
-          echo y | sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
+          $sdkManager = Get-ChildItem "$env:ANDROID_HOME\cmdline-tools" -Filter sdkmanager.bat -Recurse |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $sdkManager) { throw "sdkmanager.bat was not found under ANDROID_HOME" }
+          1..20 | ForEach-Object { "y" } |
+            & $sdkManager.FullName "platform-tools" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
 
       - name: Install JavaScript dependencies
         run: npm ci --no-audit --fund=false

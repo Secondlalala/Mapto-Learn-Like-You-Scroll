@@ -67,10 +67,10 @@ jobs:
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk))
           try {
-            $abis = $archive.Entries.FullName |
+            $abis = @($archive.Entries.FullName |
               Where-Object { $_ -match "^lib/[^/]+/" } |
               ForEach-Object { ($_ -split "/")[1] } |
-              Sort-Object -Unique
+              Sort-Object -Unique)
           } finally {
             $archive.Dispose()
           }

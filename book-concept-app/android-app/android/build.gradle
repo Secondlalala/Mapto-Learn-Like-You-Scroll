@@ -8,13 +8,13 @@ buildscript {
         kotlinVersion = "1.9.24"
     }
     repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
         maven { url "https://maven.aliyun.com/repository/google" }
         maven { url "https://maven.aliyun.com/repository/central" }
         maven { url "https://maven.aliyun.com/repository/gradle-plugin" }
         maven { url "https://maven.aliyun.com/repository/public" }
-        google()
-        mavenCentral()
-        gradlePluginPortal()
     }
     dependencies {
         classpath("com.android.tools.build:gradle")

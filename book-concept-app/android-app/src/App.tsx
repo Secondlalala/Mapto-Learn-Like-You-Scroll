@@ -1,6 +1,12 @@
+import React, {useEffect} from 'react';
 import {SafeAreaView, StyleSheet, Text} from 'react-native';
+import {openDatabase} from './data/database';
 
 function App() {
+  useEffect(() => {
+    openDatabase().catch(() => undefined);
+  }, []);
+
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>{'我的书库'}</Text>

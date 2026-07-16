@@ -1,4 +1,4 @@
-import type {ConceptCard, TtsCacheEntry} from '../../domain/models';
+import type {ConceptCard, OutlineNode, TtsCacheEntry} from '../../domain/models';
 import {
   createRepositories,
   migrateDatabase,
@@ -22,6 +22,7 @@ class MemoryDatabase implements Database {
   public userVersion = 0;
   public foreignKeysEnabled = false;
   public failCursorAdvance = false;
+  public failOutlineInsert = false;
 
   private state = {
     books: new Map<string, Row>(),
@@ -84,6 +85,9 @@ class MemoryDatabase implements Database {
       return {rows: book ? [{last_read_card_id: book.last_read_card_id}] : [], rowsAffected: 0};
     }
     if (normalized.startsWith('INSERT INTO OUTLINE_NODES')) {
+      if (this.failOutlineInsert) {
+        throw new Error('outline insert failed');
+      }
       const [id, bookId, parentId, title, level, body, childIds, status, chunkIndex] = params;
       if (!this.state.books.has(bookId as string)) {
         throw new Error('FOREIGN KEY constraint failed: outline_nodes.book_id');
@@ -267,6 +271,18 @@ const card: ConceptCard = {
   createdAt: '2026-07-12T00:00:00.000Z',
 };
 
+const outlineNode: OutlineNode = {
+  id: 'outline-1',
+  bookId: book.id,
+  parentId: null,
+  title: 'Outline',
+  level: 1,
+  body: 'Body',
+  childIds: [],
+  status: 'queued',
+  chunkIndex: 0,
+};
+
 async function createReadyRepositories(database = new MemoryDatabase()) {
   await migrateDatabase(database);
   const repositories = createRepositories(database);
@@ -332,6 +348,18 @@ describe('SQLite repositories', () => {
 
     await expect(repositories.getBook(book.id)).resolves.toMatchObject({tags: ['math', 'notes']});
     await expect(repositories.listCards(book.id)).resolves.toEqual([card]);
+  });
+
+  it('inserts a book and its outline atomically', async () => {
+    const database = new MemoryDatabase();
+    await migrateDatabase(database);
+    const repositories = createRepositories(database);
+    database.failOutlineInsert = true;
+
+    await expect(repositories.insertBookWithOutline(book, [outlineNode])).rejects.toThrow('outline insert failed');
+
+    await expect(repositories.getBook(book.id)).resolves.toBeNull();
+    expect(database.transactionCount).toBe(1);
   });
 
   it('toggles a card favorite and returns its new value', async () => {

@@ -3,6 +3,7 @@ import type {
   ChatMessage,
   ConceptCard,
   GenerationState,
+  OutlineNode,
   TtsCacheEntry,
 } from '../domain/models';
 import {openDatabase, type Database} from './database';
@@ -123,10 +124,30 @@ async function insertCard(database: Database, card: ConceptCard): Promise<void> 
   );
 }
 
+async function insertOutlineNode(database: Database, node: OutlineNode): Promise<void> {
+  await database.execute(
+    `INSERT INTO outline_nodes (
+      id, book_id, parent_id, title, level, body, child_ids, status, chunk_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      node.id,
+      node.bookId,
+      node.parentId,
+      node.title,
+      node.level,
+      node.body,
+      toJson(node.childIds),
+      node.status,
+      node.chunkIndex,
+    ],
+  );
+}
+
 export interface Repositories {
   listBooks(): Promise<Book[]>;
   getBook(id: string): Promise<Book | null>;
   insertBook(book: Book): Promise<void>;
+  insertBookWithOutline(book: Book, outline: OutlineNode[]): Promise<void>;
   insertCard(card: ConceptCard): Promise<void>;
   listCards(bookId: string): Promise<ConceptCard[]>;
   toggleFavorite(cardId: string): Promise<boolean>;
@@ -169,6 +190,32 @@ export function createRepositories(database: Database): Repositories {
           book.updatedAt,
         ],
       );
+    },
+
+    async insertBookWithOutline(book, outline) {
+      if (outline.some(node => node.bookId !== book.id)) {
+        throw new Error('Outline nodes must belong to the imported book');
+      }
+      await database.transaction(async transaction => {
+        await transaction.execute(
+          `INSERT INTO books (
+            id, title, author, source_uri, original_text, tags, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            book.id,
+            book.title,
+            book.author,
+            book.sourceUri,
+            book.originalText,
+            toJson(book.tags),
+            book.createdAt,
+            book.updatedAt,
+          ],
+        );
+        for (const node of outline) {
+          await insertOutlineNode(transaction, node);
+        }
+      });
     },
 
     insertCard: card => insertCard(database, card),

@@ -9,8 +9,12 @@
     "assemble:debug": "cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
+    "@react-native-documents/picker": "10.0.0",
+    "iconv-lite": "0.7.3",
+    "jschardet": "3.1.4",
     "react": "18.3.1",
     "react-native": "0.76.3",
+    "react-native-file-access": "4.0.3",
     "react-native-sqlite-storage": "6.0.1"
   },
   "devDependencies": {

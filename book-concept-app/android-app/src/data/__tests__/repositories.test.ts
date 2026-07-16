@@ -44,11 +44,11 @@ class MemoryDatabase implements Database {
     if (normalized === 'PRAGMA USER_VERSION') {
       return {rows: [{user_version: this.userVersion}], rowsAffected: 0};
     }
-    if (normalized === 'PRAGMA USER_VERSION = 1') {
-      this.userVersion = 1;
+    if (normalized === 'PRAGMA USER_VERSION = 1' || normalized === 'PRAGMA USER_VERSION = 2') {
+      this.userVersion = normalized === 'PRAGMA USER_VERSION = 2' ? 2 : 1;
       return {rows: [], rowsAffected: 0};
     }
-    if (normalized.startsWith('CREATE TABLE') || normalized.startsWith('CREATE INDEX')) {
+    if (normalized.startsWith('CREATE TABLE') || normalized.startsWith('CREATE INDEX') || normalized.startsWith('ALTER TABLE')) {
       return {rows: [], rowsAffected: 0};
     }
     if (normalized.startsWith('INSERT INTO BOOKS')) {
@@ -88,7 +88,7 @@ class MemoryDatabase implements Database {
       if (this.failOutlineInsert) {
         throw new Error('outline insert failed');
       }
-      const [id, bookId, parentId, title, level, body, childIds, status, chunkIndex] = params;
+      const [id, bookId, parentId, title, level, body, childIds, status, chunkIndex, startOffset, endOffset] = params;
       if (!this.state.books.has(bookId as string)) {
         throw new Error('FOREIGN KEY constraint failed: outline_nodes.book_id');
       }
@@ -105,8 +105,16 @@ class MemoryDatabase implements Database {
         child_ids: childIds,
         status,
         chunk_index: chunkIndex,
+        start_offset: startOffset,
+        end_offset: endOffset,
       });
       return {rows: [], rowsAffected: 1};
+    }
+    if (normalized.startsWith('SELECT * FROM OUTLINE_NODES WHERE BOOK_ID')) {
+      return {
+        rows: [...this.state.outlineNodes.values()].filter(node => node.book_id === params[0]),
+        rowsAffected: 0,
+      };
     }
     if (normalized.startsWith('INSERT INTO CARDS')) {
       const [id, bookId, sectionId, title, summary, body, keyPoints, sourceExcerpt, formulae, isFavorite, createdAt] = params;
@@ -281,6 +289,8 @@ const outlineNode: OutlineNode = {
   childIds: [],
   status: 'queued',
   chunkIndex: 0,
+  startOffset: 7,
+  endOffset: 11,
 };
 
 async function createReadyRepositories(database = new MemoryDatabase()) {
@@ -290,20 +300,20 @@ async function createReadyRepositories(database = new MemoryDatabase()) {
   await database.execute(
     `INSERT INTO outline_nodes (
       id, book_id, parent_id, title, level, body, child_ids, status, chunk_index
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [card.sectionId, book.id, null, 'Section', 1, 'Body', '[]', 'queued', 0],
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [card.sectionId, book.id, null, 'Section', 1, 'Body', '[]', 'queued', 0, 0, 4],
   );
   return {database, repositories};
 }
 
 describe('SQLite repositories', () => {
-  it('applies version 1 migration with foreign keys enabled', async () => {
+  it('applies version 2 migration with foreign keys enabled', async () => {
     const database = new MemoryDatabase();
 
     await migrateDatabase(database);
 
     expect(database.foreignKeysEnabled).toBe(true);
-    expect(database.userVersion).toBe(1);
+    expect(database.userVersion).toBe(2);
     const statements = database.statements.join('\n');
     for (const table of [
       'books',
@@ -315,6 +325,17 @@ describe('SQLite repositories', () => {
     ]) {
       expect(statements).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
     }
+  });
+
+  it('upgrades an existing version 1 database without resetting it', async () => {
+    const database = new MemoryDatabase();
+    database.userVersion = 1;
+
+    await migrateDatabase(database);
+
+    expect(database.userVersion).toBe(2);
+    expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN start_offset');
+    expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN end_offset');
   });
 
   it('retries database initialization after a failed open', async () => {
@@ -359,6 +380,17 @@ describe('SQLite repositories', () => {
     await expect(repositories.insertBookWithOutline(book, [outlineNode])).rejects.toThrow('outline insert failed');
 
     await expect(repositories.getBook(book.id)).resolves.toBeNull();
+    expect(database.transactionCount).toBe(1);
+  });
+
+  it('round trips imported outline source offsets atomically', async () => {
+    const database = new MemoryDatabase();
+    await migrateDatabase(database);
+    const repositories = createRepositories(database);
+
+    await repositories.insertBookWithOutline(book, [outlineNode]);
+
+    await expect(repositories.listOutlineNodes(book.id)).resolves.toEqual([outlineNode]);
     expect(database.transactionCount).toBe(1);
   });
 

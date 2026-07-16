@@ -47,6 +47,8 @@ function createOutlineNodes(bookId: string, text: string): OutlineNode[] {
         childIds: [],
         status: 'queued',
         chunkIndex: chunk.index,
+        startOffset: chunk.startOffset,
+        endOffset: chunk.endOffset,
       });
     }
   }

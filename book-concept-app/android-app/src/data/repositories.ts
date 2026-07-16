@@ -53,6 +53,22 @@ function toBook(row: Row): Book {
   };
 }
 
+function toOutlineNode(row: Row): OutlineNode {
+  return {
+    id: asString(row.id),
+    bookId: asString(row.book_id),
+    parentId: asNullableString(row.parent_id),
+    title: asString(row.title),
+    level: Number(row.level),
+    body: asString(row.body),
+    childIds: fromJsonArray(row.child_ids),
+    status: asString(row.status) as OutlineNode['status'],
+    chunkIndex: Number(row.chunk_index),
+    startOffset: Number(row.start_offset ?? 0),
+    endOffset: Number(row.end_offset ?? 0),
+  };
+}
+
 function toCard(row: Row): ConceptCard {
   return {
     id: asString(row.id),
@@ -127,8 +143,8 @@ async function insertCard(database: Database, card: ConceptCard): Promise<void> 
 async function insertOutlineNode(database: Database, node: OutlineNode): Promise<void> {
   await database.execute(
     `INSERT INTO outline_nodes (
-      id, book_id, parent_id, title, level, body, child_ids, status, chunk_index
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, book_id, parent_id, title, level, body, child_ids, status, chunk_index, start_offset, end_offset
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       node.id,
       node.bookId,
@@ -139,6 +155,8 @@ async function insertOutlineNode(database: Database, node: OutlineNode): Promise
       toJson(node.childIds),
       node.status,
       node.chunkIndex,
+      node.startOffset,
+      node.endOffset,
     ],
   );
 }
@@ -148,6 +166,7 @@ export interface Repositories {
   getBook(id: string): Promise<Book | null>;
   insertBook(book: Book): Promise<void>;
   insertBookWithOutline(book: Book, outline: OutlineNode[]): Promise<void>;
+  listOutlineNodes(bookId: string): Promise<OutlineNode[]>;
   insertCard(card: ConceptCard): Promise<void>;
   listCards(bookId: string): Promise<ConceptCard[]>;
   toggleFavorite(cardId: string): Promise<boolean>;
@@ -216,6 +235,14 @@ export function createRepositories(database: Database): Repositories {
           await insertOutlineNode(transaction, node);
         }
       });
+    },
+
+    async listOutlineNodes(bookId) {
+      const result = await database.execute(
+        'SELECT * FROM outline_nodes WHERE book_id = ? ORDER BY level ASC, chunk_index ASC',
+        [bookId],
+      );
+      return result.rows.map(toOutlineNode);
     },
 
     insertCard: card => insertCard(database, card),

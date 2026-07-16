@@ -36,8 +36,7 @@ function parseHeading(line: string): Heading | null {
 
   const english = /^(chapter|section)\s+(\d+(?:\.\d+)*)\b[-.、:：\s]*(.*?)\s*$/i.exec(line);
   if (english) {
-    const level = english[1].toLowerCase() === 'section' ? 2 : english[2].split('.').length;
-    return {level, title: line.trim()};
+    return {level: english[2].split('.').length, title: line.trim()};
   }
 
   const numbered = /^(\d+(?:\.\d+)+)\s*[-.、:：]?\s+(.+?)\s*$/.exec(line);
@@ -136,7 +135,7 @@ export function splitOversizedSection(section: ParsedSection, maxChars = 6000): 
   }
 
   const paragraphs: Array<{text: string; startOffset: number}> = [];
-  const paragraphBoundary = /\n[\t ]*\n+/g;
+  const paragraphBoundary = /\r?\n[\t ]*\r?\n+/g;
   let paragraphStart = 0;
   let boundary: RegExpExecArray | null;
   while ((boundary = paragraphBoundary.exec(section.text)) !== null) {

@@ -21,6 +21,8 @@ export interface OutlineNode {
   childIds: string[];
   status: GenerationStatus;
   chunkIndex: number;
+  startOffset: number;
+  endOffset: number;
 }
 
 export interface ConceptCard {

@@ -29,6 +29,27 @@ describe('parseOutline', () => {
     expect(result[1].parentId).toBe('section-1');
     expect(result[3].parentId).toBe('section-3');
   });
+
+  it('preserves numeric depth for nested English Section headings', () => {
+    const result = parseOutline('Section 3 Root\nBody\nSection 3.1 Child\nBody\nSection 3.1.1 Grandchild\nBody');
+
+    expect(result.map(section => [section.level, section.parentId])).toEqual([
+      [1, null],
+      [2, 'section-1'],
+      [3, 'section-2'],
+    ]);
+  });
+
+  it('creates a zero-width document section for an empty file', () => {
+    expect(parseOutline('')).toEqual([
+      expect.objectContaining({
+        startOffset: 0,
+        endOffset: 0,
+        contentStartOffset: 0,
+        text: '',
+      }),
+    ]);
+  });
 });
 
 describe('splitOversizedSection', () => {
@@ -58,5 +79,18 @@ describe('splitOversizedSection', () => {
 
     expect(chunks.map(chunk => chunk.text)).toEqual(['abc', 'def']);
     expect(chunks.every(chunk => chunk.text.length <= 3)).toBe(true);
+  });
+
+  it('splits CRLF paragraphs without changing their source offsets', () => {
+    const chunks = splitOversizedSection(
+      {...section, text: 'aa\r\n\r\nbb\r\n\r\ncc', startOffset: 100, contentStartOffset: 100, endOffset: 114},
+      2,
+    );
+
+    expect(chunks.map(chunk => [chunk.text, chunk.startOffset, chunk.endOffset])).toEqual([
+      ['aa', 100, 102],
+      ['bb', 106, 108],
+      ['cc', 112, 114],
+    ]);
   });
 });

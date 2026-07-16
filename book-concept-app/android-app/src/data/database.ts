@@ -71,7 +71,9 @@ const migrationV1 = [
     body TEXT NOT NULL,
     child_ids TEXT NOT NULL,
     status TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL DEFAULT 0
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    start_offset INTEGER NOT NULL DEFAULT 0,
+    end_offset INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS cards (
     id TEXT PRIMARY KEY NOT NULL,
@@ -115,18 +117,32 @@ const migrationV1 = [
   'CREATE INDEX IF NOT EXISTS chat_messages_card_id_idx ON chat_messages(card_id)',
 ];
 
+const migrationV2 = [
+  'ALTER TABLE outline_nodes ADD COLUMN start_offset INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE outline_nodes ADD COLUMN end_offset INTEGER NOT NULL DEFAULT 0',
+];
+
 export async function migrateDatabase(database: Database): Promise<void> {
   await database.execute('PRAGMA foreign_keys = ON');
   const version = await database.execute('PRAGMA user_version');
-  const userVersion = Number(version.rows[0]?.user_version ?? 0);
-  if (userVersion >= 1) {
-    return;
+  let userVersion = Number(version.rows[0]?.user_version ?? 0);
+  const existingVersion = userVersion;
+  if (userVersion < 1) {
+    for (const statement of migrationV1) {
+      await database.execute(statement);
+    }
+    await database.execute('PRAGMA user_version = 1');
+    userVersion = 1;
   }
 
-  for (const statement of migrationV1) {
-    await database.execute(statement);
+  if (userVersion < 2) {
+    if (existingVersion >= 1) {
+      for (const statement of migrationV2) {
+        await database.execute(statement);
+      }
+    }
+    await database.execute('PRAGMA user_version = 2');
   }
-  await database.execute('PRAGMA user_version = 1');
 }
 
 let databasePromise: Promise<Database> | null = null;

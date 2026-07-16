@@ -1,7 +1,9 @@
 import type {Repositories} from '../../data/repositories';
 import {createBookImporter} from '../importBook';
 
-function createDependencies() {
+function createDependencies(
+  bytes = new Uint8Array([0x23, 0x20, 0xe7, 0xac, 0xac, 0xe4, 0xb8, 0x80, 0xe7, 0xab, 0xa0, 0x0a, 0xe6, 0xad, 0xa3, 0xe6, 0x96, 0x87]),
+) {
   const events: string[] = [];
   const repositories = {
     insertBookWithOutline: jest.fn(async () => {
@@ -16,7 +18,7 @@ function createDependencies() {
     }),
     readBytes: jest.fn(async () => {
       events.push('read');
-      return new Uint8Array([0x23, 0x20, 0xe7, 0xac, 0xac, 0xe4, 0xb8, 0x80, 0xe7, 0xab, 0xa0, 0x0a, 0xe6, 0xad, 0xa3, 0xe6, 0x96, 0x87]);
+      return bytes;
     }),
     repositories: jest.fn(async () => repositories),
     now: jest.fn(() => '2026-07-16T00:00:00.000Z'),
@@ -48,6 +50,8 @@ describe('createBookImporter', () => {
           parentId: null,
           title: '第一章',
           body: '正文',
+          startOffset: 6,
+          endOffset: 8,
         }),
       ],
     );
@@ -62,5 +66,17 @@ describe('createBookImporter', () => {
     expect(dependencies.copyToDocuments).not.toHaveBeenCalled();
     expect(dependencies.readBytes).not.toHaveBeenCalled();
     expect(repositories.insertBookWithOutline).not.toHaveBeenCalled();
+  });
+
+  it('imports an empty file with a zero-width outline node', async () => {
+    const {dependencies, repositories} = createDependencies(new Uint8Array());
+    const importBook = createBookImporter(dependencies);
+
+    await importBook('content://books/empty.txt');
+
+    expect(repositories.insertBookWithOutline).toHaveBeenCalledWith(
+      expect.anything(),
+      [expect.objectContaining({body: '', startOffset: 0, endOffset: 0})],
+    );
   });
 });

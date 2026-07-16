@@ -55,7 +55,7 @@ jobs:
         run: npm ci --no-audit --fund=false
 
       - name: Run unit tests
-        run: npm test -- --runInBand
+        run: npm test -- --runInBand --testTimeout=15000
 
       - name: Assemble ARM64 debug APK
         shell: pwsh

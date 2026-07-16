@@ -85,6 +85,17 @@ const migrationV1 = [
     key_points TEXT NOT NULL,
     source_excerpt TEXT NOT NULL,
     formulae TEXT NOT NULL,
+    card_type TEXT NOT NULL,
+    chapter TEXT NOT NULL,
+    source_text TEXT NOT NULL,
+    one_sentence TEXT NOT NULL,
+    simple_explanation TEXT NOT NULL,
+    fable TEXT NOT NULL,
+    formula TEXT NOT NULL,
+    formula_explanation TEXT NOT NULL,
+    prerequisites TEXT NOT NULL,
+    related_concepts TEXT NOT NULL,
+    questions TEXT NOT NULL,
     is_favorite INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
@@ -101,6 +112,7 @@ const migrationV1 = [
     status TEXT NOT NULL,
     next_chunk_index INTEGER NOT NULL,
     error_message TEXT,
+    error_code TEXT,
     updated_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS tts_cache (
@@ -122,17 +134,40 @@ const migrationV2 = [
   'ALTER TABLE outline_nodes ADD COLUMN end_offset INTEGER NOT NULL DEFAULT 0',
 ];
 
+const migrationV3 = [
+  "ALTER TABLE cards ADD COLUMN card_type TEXT NOT NULL DEFAULT 'concept'",
+  "ALTER TABLE cards ADD COLUMN chapter TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE cards ADD COLUMN source_text TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE cards ADD COLUMN one_sentence TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE cards ADD COLUMN simple_explanation TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE cards ADD COLUMN fable TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE cards ADD COLUMN formula TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE cards ADD COLUMN formula_explanation TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE cards ADD COLUMN prerequisites TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE cards ADD COLUMN related_concepts TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE cards ADD COLUMN questions TEXT NOT NULL DEFAULT '[]'",
+  'ALTER TABLE generation_state ADD COLUMN error_code TEXT',
+  `UPDATE cards SET
+    source_text = source_excerpt,
+    one_sentence = summary,
+    simple_explanation = body,
+    fable = body,
+    prerequisites = key_points`,
+];
+
 export async function migrateDatabase(database: Database): Promise<void> {
   await database.execute('PRAGMA foreign_keys = ON');
   const version = await database.execute('PRAGMA user_version');
   const userVersion = Number(version.rows[0]?.user_version ?? 0);
-  if (userVersion < 2) {
-    const migration = userVersion < 1 ? migrationV1 : migrationV2;
+  if (userVersion < 3) {
+    const migration = userVersion < 1
+      ? migrationV1
+      : [...(userVersion < 2 ? migrationV2 : []), ...migrationV3];
     await database.transaction(async transaction => {
       for (const statement of migration) {
         await transaction.execute(statement);
       }
-      await transaction.execute('PRAGMA user_version = 2');
+      await transaction.execute('PRAGMA user_version = 3');
     });
   }
 }

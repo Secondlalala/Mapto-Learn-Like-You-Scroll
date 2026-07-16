@@ -29,12 +29,18 @@ export interface ConceptCard {
   id: string;
   bookId: string;
   sectionId: string;
+  cardType: 'section_overview' | 'concept';
+  chapter: string;
   title: string;
-  summary: string;
-  body: string;
-  keyPoints: string[];
-  sourceExcerpt: string;
-  formulae: string[];
+  sourceText: string;
+  oneSentence: string;
+  simpleExplanation: string;
+  fable: string;
+  formula: string;
+  formulaExplanation: string;
+  prerequisites: string[];
+  relatedConcepts: string[];
+  questions: string[];
   isFavorite: boolean;
   createdAt: string;
 }
@@ -53,6 +59,7 @@ export interface GenerationState {
   status: GenerationStatus;
   nextChunkIndex: number;
   errorMessage: string | null;
+  errorCode: string | null;
   updatedAt: string;
 }
 

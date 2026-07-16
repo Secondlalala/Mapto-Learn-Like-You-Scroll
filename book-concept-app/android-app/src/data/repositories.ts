@@ -70,16 +70,23 @@ function toOutlineNode(row: Row): OutlineNode {
 }
 
 function toCard(row: Row): ConceptCard {
+  const legacyFormulae = fromJsonArray(row.formulae);
   return {
     id: asString(row.id),
     bookId: asString(row.book_id),
     sectionId: asString(row.section_id),
+    cardType: row.card_type === 'section_overview' ? 'section_overview' : 'concept',
+    chapter: asString(row.chapter),
     title: asString(row.title),
-    summary: asString(row.summary),
-    body: asString(row.body),
-    keyPoints: fromJsonArray(row.key_points),
-    sourceExcerpt: asString(row.source_excerpt),
-    formulae: fromJsonArray(row.formulae),
+    sourceText: asString(row.source_text || row.source_excerpt),
+    oneSentence: asString(row.one_sentence || row.summary),
+    simpleExplanation: asString(row.simple_explanation || row.body),
+    fable: asString(row.fable || row.body),
+    formula: asString(row.formula || legacyFormulae[0]),
+    formulaExplanation: asString(row.formula_explanation),
+    prerequisites: row.prerequisites == null ? fromJsonArray(row.key_points) : fromJsonArray(row.prerequisites),
+    relatedConcepts: fromJsonArray(row.related_concepts),
+    questions: fromJsonArray(row.questions),
     isFavorite: Number(row.is_favorite) === 1,
     createdAt: asString(row.created_at),
   };
@@ -102,6 +109,7 @@ function toGenerationState(row: Row): GenerationState {
     status: asString(row.status) as GenerationState['status'],
     nextChunkIndex: Number(row.next_chunk_index),
     errorMessage: asNullableString(row.error_message),
+    errorCode: asNullableString(row.error_code),
     updatedAt: asString(row.updated_at),
   };
 }
@@ -122,18 +130,31 @@ function toTtsCacheEntry(row: Row): TtsCacheEntry {
 async function insertCard(database: Database, card: ConceptCard): Promise<void> {
   await database.execute(
     `INSERT INTO cards (
-      id, book_id, section_id, title, summary, body, key_points, source_excerpt, formulae, is_favorite, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, book_id, section_id, title, summary, body, key_points, source_excerpt, formulae,
+      card_type, chapter, source_text, one_sentence, simple_explanation, fable, formula,
+      formula_explanation, prerequisites, related_concepts, questions, is_favorite, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       card.id,
       card.bookId,
       card.sectionId,
       card.title,
-      card.summary,
-      card.body,
-      toJson(card.keyPoints),
-      card.sourceExcerpt,
-      toJson(card.formulae),
+      card.oneSentence,
+      card.simpleExplanation,
+      toJson(card.prerequisites),
+      card.sourceText,
+      toJson(card.formula ? [card.formula] : []),
+      card.cardType,
+      card.chapter,
+      card.sourceText,
+      card.oneSentence,
+      card.simpleExplanation,
+      card.fable,
+      card.formula,
+      card.formulaExplanation,
+      toJson(card.prerequisites),
+      toJson(card.relatedConcepts),
+      toJson(card.questions),
       card.isFavorite ? 1 : 0,
       card.createdAt,
     ],
@@ -167,14 +188,16 @@ export interface Repositories {
   insertBook(book: Book): Promise<void>;
   insertBookWithOutline(book: Book, outline: OutlineNode[]): Promise<void>;
   listOutlineNodes(bookId: string): Promise<OutlineNode[]>;
+  getOutlineNode(sectionId: string): Promise<OutlineNode | null>;
   insertCard(card: ConceptCard): Promise<void>;
   listCards(bookId: string): Promise<ConceptCard[]>;
+  getCard(cardId: string): Promise<ConceptCard | null>;
   toggleFavorite(cardId: string): Promise<boolean>;
   listMessages(cardId: string): Promise<ChatMessage[]>;
   insertMessage(message: ChatMessage): Promise<void>;
   getGenerationState(sectionId: string): Promise<GenerationState | null>;
   setGenerationState(state: GenerationState): Promise<void>;
-  saveCardsAndAdvance(sectionId: string, cards: ConceptCard[], nextChunkIndex: number): Promise<void>;
+  saveCardsAndAdvance(sectionId: string, cards: ConceptCard[], nextChunkIndex: number, updatedAt?: string): Promise<void>;
   setLastReadCard(bookId: string, cardId: string): Promise<void>;
   getLastReadCard(bookId: string): Promise<string | null>;
   upsertTtsCache(entry: TtsCacheEntry): Promise<void>;
@@ -239,10 +262,15 @@ export function createRepositories(database: Database): Repositories {
 
     async listOutlineNodes(bookId) {
       const result = await database.execute(
-        'SELECT * FROM outline_nodes WHERE book_id = ? ORDER BY level ASC, chunk_index ASC',
+        'SELECT * FROM outline_nodes WHERE book_id = ? ORDER BY start_offset ASC, end_offset ASC, chunk_index ASC',
         [bookId],
       );
       return result.rows.map(toOutlineNode);
+    },
+
+    async getOutlineNode(sectionId) {
+      const result = await database.execute('SELECT * FROM outline_nodes WHERE id = ?', [sectionId]);
+      return result.rows[0] ? toOutlineNode(result.rows[0]) : null;
     },
 
     insertCard: card => insertCard(database, card),
@@ -250,6 +278,11 @@ export function createRepositories(database: Database): Repositories {
     async listCards(bookId) {
       const result = await database.execute('SELECT * FROM cards WHERE book_id = ? ORDER BY created_at ASC', [bookId]);
       return result.rows.map(toCard);
+    },
+
+    async getCard(cardId) {
+      const result = await database.execute('SELECT * FROM cards WHERE id = ?', [cardId]);
+      return result.rows[0] ? toCard(result.rows[0]) : null;
     },
 
     async toggleFavorite(cardId) {
@@ -280,34 +313,39 @@ export function createRepositories(database: Database): Repositories {
     },
 
     async setGenerationState(state) {
-      await database.execute(
-        `INSERT INTO generation_state (section_id, status, next_chunk_index, error_message, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(section_id) DO UPDATE SET
-           status = excluded.status,
-           next_chunk_index = excluded.next_chunk_index,
-           error_message = excluded.error_message,
-           updated_at = excluded.updated_at`,
-        [state.sectionId, state.status, state.nextChunkIndex, state.errorMessage, state.updatedAt],
-      );
+      await database.transaction(async transaction => {
+        await transaction.execute(
+          `INSERT INTO generation_state (section_id, status, next_chunk_index, error_message, error_code, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(section_id) DO UPDATE SET
+             status = excluded.status,
+             next_chunk_index = excluded.next_chunk_index,
+             error_message = excluded.error_message,
+             error_code = excluded.error_code,
+             updated_at = excluded.updated_at`,
+          [state.sectionId, state.status, state.nextChunkIndex, state.errorMessage, state.errorCode, state.updatedAt],
+        );
+        await transaction.execute('UPDATE outline_nodes SET status = ? WHERE id = ?', [state.status, state.sectionId]);
+      });
     },
 
-    async saveCardsAndAdvance(sectionId, cards, nextChunkIndex) {
+    async saveCardsAndAdvance(sectionId, cards, nextChunkIndex, requestedUpdatedAt) {
       if (nextChunkIndex < 0) {
         throw new Error('Invalid generation cursor');
       }
-      const updatedAt = new Date().toISOString();
+      const updatedAt = requestedUpdatedAt ?? new Date().toISOString();
       await database.transaction(async transaction => {
         for (const card of cards) {
           await insertCard(transaction, card);
         }
         await transaction.execute(
-          `INSERT INTO generation_state (section_id, status, next_chunk_index, error_message, updated_at)
-           VALUES (?, ?, ?, NULL, ?)
+          `INSERT INTO generation_state (section_id, status, next_chunk_index, error_message, error_code, updated_at)
+           VALUES (?, ?, ?, NULL, NULL, ?)
            ON CONFLICT(section_id) DO UPDATE SET
              status = excluded.status,
-             next_chunk_index = excluded.next_chunk_index,
-             error_message = NULL,
+              next_chunk_index = excluded.next_chunk_index,
+              error_message = NULL,
+              error_code = NULL,
              updated_at = excluded.updated_at`,
           [sectionId, 'completed', nextChunkIndex, updatedAt],
         );

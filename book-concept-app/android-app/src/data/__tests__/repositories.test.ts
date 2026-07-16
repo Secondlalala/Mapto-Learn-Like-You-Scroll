@@ -37,6 +37,10 @@ class MemoryDatabase implements Database {
     ttsCache: new Map<string, Row>(),
   };
 
+  seedLegacyCard(row: Row): void {
+    this.state.cards.set(row.id as string, {...row});
+  }
+
   async execute(sql: string, params: unknown[] = []): Promise<QueryResult> {
     this.statements.push(sql);
     this.activeTransactionStatements?.push(sql);
@@ -63,8 +67,8 @@ class MemoryDatabase implements Database {
     if (normalized === 'PRAGMA USER_VERSION') {
       return {rows: [{user_version: this.userVersion}], rowsAffected: 0};
     }
-    if (normalized === 'PRAGMA USER_VERSION = 1' || normalized === 'PRAGMA USER_VERSION = 2') {
-      this.userVersion = normalized === 'PRAGMA USER_VERSION = 2' ? 2 : 1;
+    if (/^PRAGMA USER_VERSION = [123]$/.test(normalized)) {
+      this.userVersion = Number(normalized.at(-1));
       return {rows: [], rowsAffected: 0};
     }
     if (normalized.startsWith('CREATE TABLE') || normalized.startsWith('CREATE INDEX') || normalized.startsWith('ALTER TABLE')) {
@@ -135,8 +139,16 @@ class MemoryDatabase implements Database {
         rowsAffected: 0,
       };
     }
+    if (normalized.startsWith('SELECT * FROM OUTLINE_NODES WHERE ID')) {
+      const outlineNode = this.state.outlineNodes.get(params[0] as string);
+      return {rows: outlineNode ? [outlineNode] : [], rowsAffected: 0};
+    }
     if (normalized.startsWith('INSERT INTO CARDS')) {
-      const [id, bookId, sectionId, title, summary, body, keyPoints, sourceExcerpt, formulae, isFavorite, createdAt] = params;
+      const [
+        id, bookId, sectionId, title, summary, body, keyPoints, sourceExcerpt, formulae,
+        cardType, chapter, sourceText, oneSentence, simpleExplanation, fable, formula,
+        formulaExplanation, prerequisites, relatedConcepts, questions, isFavorite, createdAt,
+      ] = params;
       const section = this.state.outlineNodes.get(sectionId as string);
       if (!this.state.books.has(bookId as string) || section?.book_id !== bookId) {
         throw new Error('FOREIGN KEY constraint failed: cards parents');
@@ -151,6 +163,17 @@ class MemoryDatabase implements Database {
         key_points: keyPoints,
         source_excerpt: sourceExcerpt,
         formulae,
+        card_type: cardType,
+        chapter,
+        source_text: sourceText,
+        one_sentence: oneSentence,
+        simple_explanation: simpleExplanation,
+        fable,
+        formula,
+        formula_explanation: formulaExplanation,
+        prerequisites,
+        related_concepts: relatedConcepts,
+        questions,
         is_favorite: isFavorite,
         created_at: createdAt,
       });
@@ -162,6 +185,10 @@ class MemoryDatabase implements Database {
         rowsAffected: 0,
       };
     }
+    if (normalized.startsWith('SELECT * FROM CARDS WHERE ID')) {
+      const existingCard = this.state.cards.get(params[0] as string);
+      return {rows: existingCard ? [existingCard] : [], rowsAffected: 0};
+    }
     if (normalized.startsWith('SELECT IS_FAVORITE FROM CARDS')) {
       const card = this.state.cards.get(params[0] as string);
       return {rows: card ? [{is_favorite: card.is_favorite}] : [], rowsAffected: 0};
@@ -172,6 +199,16 @@ class MemoryDatabase implements Database {
         card.is_favorite = params[0];
       }
       return {rows: [], rowsAffected: card ? 1 : 0};
+    }
+    if (normalized.startsWith('UPDATE CARDS SET SOURCE_TEXT')) {
+      for (const existingCard of this.state.cards.values()) {
+        existingCard.source_text = existingCard.source_excerpt;
+        existingCard.one_sentence = existingCard.summary;
+        existingCard.simple_explanation = existingCard.body;
+        existingCard.fable = existingCard.body;
+        existingCard.prerequisites = existingCard.key_points;
+      }
+      return {rows: [], rowsAffected: this.state.cards.size};
     }
     if (normalized.startsWith('INSERT INTO CHAT_MESSAGES')) {
       const [id, cardId, role, content, citations, createdAt] = params;
@@ -191,7 +228,10 @@ class MemoryDatabase implements Database {
       if (this.failCursorAdvance) {
         throw new Error('cursor advance failed');
       }
-      const [sectionId, status, nextChunkIndex, errorMessage, updatedAt] = params;
+      const [sectionId, status, nextChunkIndex] = params;
+      const errorMessage = params.length === 6 ? params[3] : null;
+      const errorCode = params.length === 6 ? params[4] : null;
+      const updatedAt = params.length === 6 ? params[5] : params[3];
       if (!this.state.outlineNodes.has(sectionId as string)) {
         throw new Error('FOREIGN KEY constraint failed: generation_state.section_id');
       }
@@ -200,6 +240,7 @@ class MemoryDatabase implements Database {
         status,
         next_chunk_index: nextChunkIndex,
         error_message: errorMessage,
+        error_code: errorCode,
         updated_at: updatedAt,
       });
       return {rows: [], rowsAffected: 1};
@@ -218,11 +259,15 @@ class MemoryDatabase implements Database {
       return {rows: [], rowsAffected: state ? 1 : 0};
     }
     if (normalized.startsWith('UPDATE OUTLINE_NODES SET')) {
-      const [status, chunkIndex, sectionId] = params;
+      const [status] = params;
+      const chunkIndex = params.length === 3 ? params[1] : undefined;
+      const sectionId = params.length === 3 ? params[2] : params[1];
       const node = this.state.outlineNodes.get(sectionId as string);
       if (node) {
         node.status = status;
-        node.chunk_index = chunkIndex;
+        if (chunkIndex !== undefined) {
+          node.chunk_index = chunkIndex;
+        }
       }
       return {rows: [], rowsAffected: node ? 1 : 0};
     }
@@ -299,12 +344,18 @@ const card: ConceptCard = {
   id: 'card-1',
   bookId: book.id,
   sectionId: 'section-1',
+  cardType: 'concept',
+  chapter: 'Chapter 1',
   title: 'Card',
-  summary: 'A short summary',
-  body: 'The explanation',
-  keyPoints: ['one', 'two'],
-  sourceExcerpt: 'Excerpt',
-  formulae: ['x = y'],
+  sourceText: 'Excerpt',
+  oneSentence: 'A short summary',
+  simpleExplanation: 'The explanation',
+  fable: 'A detailed fable',
+  formula: '$x=y$',
+  formulaExplanation: '$x$ and $y$ are values.',
+  prerequisites: ['one', 'two'],
+  relatedConcepts: ['three'],
+  questions: ['Why?', 'How?', 'What next?'],
   isFavorite: false,
   createdAt: '2026-07-12T00:00:00.000Z',
 };
@@ -337,13 +388,13 @@ async function createReadyRepositories(database = new MemoryDatabase()) {
 }
 
 describe('SQLite repositories', () => {
-  it('applies version 2 migration with foreign keys enabled', async () => {
+  it('applies version 3 schema with foreign keys enabled', async () => {
     const database = new MemoryDatabase();
 
     await migrateDatabase(database);
 
     expect(database.foreignKeysEnabled).toBe(true);
-    expect(database.userVersion).toBe(2);
+    expect(database.userVersion).toBe(3);
     const statements = database.statements.join('\n');
     for (const table of [
       'books',
@@ -359,9 +410,9 @@ describe('SQLite repositories', () => {
     expect(database.transactionBatches[0]).toEqual(expect.arrayContaining([
       expect.stringContaining('CREATE TABLE IF NOT EXISTS books'),
       expect.stringContaining('CREATE TABLE IF NOT EXISTS outline_nodes'),
-      'PRAGMA user_version = 2',
+      'PRAGMA user_version = 3',
     ]));
-    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 2');
+    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 3');
   });
 
   it('upgrades an existing version 1 database without resetting it', async () => {
@@ -370,14 +421,15 @@ describe('SQLite repositories', () => {
 
     await migrateDatabase(database);
 
-    expect(database.userVersion).toBe(2);
+    expect(database.userVersion).toBe(3);
     expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN start_offset');
     expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN end_offset');
-    expect(database.transactionBatches).toEqual([[
+    expect(database.transactionBatches[0]).toEqual(expect.arrayContaining([
       'ALTER TABLE outline_nodes ADD COLUMN start_offset INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE outline_nodes ADD COLUMN end_offset INTEGER NOT NULL DEFAULT 0',
-      'PRAGMA user_version = 2',
-    ]]);
+      expect.stringContaining('ALTER TABLE cards ADD COLUMN card_type'),
+      'PRAGMA user_version = 3',
+    ]));
   });
 
   it('rolls back a failed version 2 migration without advancing the schema version', async () => {
@@ -389,6 +441,67 @@ describe('SQLite repositories', () => {
 
     expect(database.userVersion).toBe(1);
     expect(database.transactionCount).toBe(1);
+    expect(database.transactionBatches).toEqual([]);
+  });
+
+  it('atomically migrates v2 cards to v3 and preserves legacy fields through fallbacks', async () => {
+    const database = new MemoryDatabase();
+    database.userVersion = 2;
+    database.seedLegacyCard({
+      id: 'legacy-card',
+      book_id: book.id,
+      section_id: card.sectionId,
+      title: 'Legacy title',
+      summary: 'Legacy sentence',
+      body: 'Legacy explanation',
+      key_points: JSON.stringify(['legacy prerequisite']),
+      source_excerpt: 'Legacy source',
+      formulae: JSON.stringify(['$x=y$']),
+      is_favorite: 1,
+      created_at: card.createdAt,
+    });
+
+    await migrateDatabase(database);
+
+    expect(database.userVersion).toBe(3);
+    expect(database.transactionBatches).toHaveLength(1);
+    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 3');
+    expect(database.transactionBatches[0]).toEqual(expect.arrayContaining([
+      expect.stringContaining('ALTER TABLE cards ADD COLUMN card_type'),
+      expect.stringContaining('ALTER TABLE cards ADD COLUMN questions'),
+      expect.stringContaining('UPDATE cards SET'),
+    ]));
+
+    const [preserved] = await createRepositories(database).listCards(book.id);
+    expect(preserved).toEqual({
+      id: 'legacy-card',
+      cardType: 'concept',
+      chapter: '',
+      title: 'Legacy title',
+      sourceText: 'Legacy source',
+      oneSentence: 'Legacy sentence',
+      simpleExplanation: 'Legacy explanation',
+      fable: 'Legacy explanation',
+      formula: '$x=y$',
+      formulaExplanation: '',
+      prerequisites: ['legacy prerequisite'],
+      relatedConcepts: [],
+      questions: [],
+      isFavorite: true,
+      bookId: book.id,
+      sectionId: card.sectionId,
+      createdAt: card.createdAt,
+    });
+  });
+
+  it('rolls back the complete v3 migration when any statement fails', async () => {
+    const database = new MemoryDatabase();
+    database.userVersion = 2;
+    database.failMigrationStatement = "ALTER TABLE CARDS ADD COLUMN QUESTIONS TEXT NOT NULL DEFAULT '[]'";
+
+    await expect(migrateDatabase(database)).rejects.toThrow('Migration failed');
+
+    expect(database.userVersion).toBe(2);
     expect(database.transactionBatches).toEqual([]);
   });
 
@@ -472,6 +585,36 @@ describe('SQLite repositories', () => {
     await expect(repositories.listCards(book.id)).resolves.toMatchObject([{isFavorite: true}]);
   });
 
+  it('looks up generation records and synchronizes section status without changing its cursor', async () => {
+    const {repositories} = await createReadyRepositories();
+    const generationRepositories = repositories as unknown as typeof repositories & {
+      getOutlineNode(sectionId: string): Promise<OutlineNode | null>;
+      getCard(cardId: string): Promise<ConceptCard | null>;
+    };
+    await repositories.insertCard(card);
+
+    await repositories.setGenerationState({
+      sectionId: card.sectionId,
+      status: 'failed',
+      nextChunkIndex: 4,
+      errorMessage: 'Safe retry message',
+      errorCode: 'deepseek_network_error',
+      updatedAt: card.createdAt,
+    });
+
+    await expect(generationRepositories.getOutlineNode(card.sectionId)).resolves.toMatchObject({
+      id: card.sectionId,
+      status: 'failed',
+      chunkIndex: 0,
+    });
+    await expect(generationRepositories.getCard(card.id)).resolves.toEqual(card);
+    await expect(repositories.getGenerationState(card.sectionId)).resolves.toMatchObject({
+      status: 'failed',
+      nextChunkIndex: 4,
+      errorCode: 'deepseek_network_error',
+    });
+  });
+
   it('persists and retrieves the last-read card for a book', async () => {
     const {repositories} = await createReadyRepositories();
 
@@ -488,6 +631,7 @@ describe('SQLite repositories', () => {
       status: 'generating',
       nextChunkIndex: 0,
       errorMessage: null,
+      errorCode: null,
       updatedAt: card.createdAt,
     });
     database.failCursorAdvance = true;

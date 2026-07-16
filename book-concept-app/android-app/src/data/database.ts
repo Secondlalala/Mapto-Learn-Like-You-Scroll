@@ -133,7 +133,7 @@ let databasePromise: Promise<Database> | null = null;
 
 export async function openDatabase(): Promise<Database> {
   if (!databasePromise) {
-    databasePromise = (async () => {
+    const initialization = (async () => {
       const sqlite = require('react-native-sqlite-storage') as NativeSQLite;
       sqlite.enablePromise(true);
       const nativeDatabase = await sqlite.openDatabase({name: 'map-to-learn.db', location: 'default'});
@@ -141,6 +141,12 @@ export async function openDatabase(): Promise<Database> {
       await migrateDatabase(database);
       return database;
     })();
+    databasePromise = initialization;
+    initialization.catch(() => {
+      if (databasePromise === initialization) {
+        databasePromise = null;
+      }
+    });
   }
   return databasePromise;
 }

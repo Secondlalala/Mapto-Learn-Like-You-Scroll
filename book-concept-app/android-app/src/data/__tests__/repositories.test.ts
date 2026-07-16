@@ -2,11 +2,19 @@ import type {ConceptCard, TtsCacheEntry} from '../../domain/models';
 import {
   createRepositories,
   migrateDatabase,
+  openDatabase,
   type Database,
   type QueryResult,
 } from '../database';
 
 type Row = Record<string, unknown>;
+
+const mockNativeOpenDatabase = jest.fn();
+
+jest.mock('react-native-sqlite-storage', () => ({
+  enablePromise: jest.fn(),
+  openDatabase: (...args: unknown[]) => mockNativeOpenDatabase(...args),
+}));
 
 class MemoryDatabase implements Database {
   public readonly statements: string[] = [];
@@ -77,6 +85,12 @@ class MemoryDatabase implements Database {
     }
     if (normalized.startsWith('INSERT INTO OUTLINE_NODES')) {
       const [id, bookId, parentId, title, level, body, childIds, status, chunkIndex] = params;
+      if (!this.state.books.has(bookId as string)) {
+        throw new Error('FOREIGN KEY constraint failed: outline_nodes.book_id');
+      }
+      if (parentId !== null && !this.state.outlineNodes.has(parentId as string)) {
+        throw new Error('FOREIGN KEY constraint failed: outline_nodes.parent_id');
+      }
       this.state.outlineNodes.set(id as string, {
         id,
         book_id: bookId,
@@ -92,6 +106,10 @@ class MemoryDatabase implements Database {
     }
     if (normalized.startsWith('INSERT INTO CARDS')) {
       const [id, bookId, sectionId, title, summary, body, keyPoints, sourceExcerpt, formulae, isFavorite, createdAt] = params;
+      const section = this.state.outlineNodes.get(sectionId as string);
+      if (!this.state.books.has(bookId as string) || section?.book_id !== bookId) {
+        throw new Error('FOREIGN KEY constraint failed: cards parents');
+      }
       this.state.cards.set(id as string, {
         id,
         book_id: bookId,
@@ -126,6 +144,9 @@ class MemoryDatabase implements Database {
     }
     if (normalized.startsWith('INSERT INTO CHAT_MESSAGES')) {
       const [id, cardId, role, content, citations, createdAt] = params;
+      if (!this.state.cards.has(cardId as string)) {
+        throw new Error('FOREIGN KEY constraint failed: chat_messages.card_id');
+      }
       this.state.messages.set(id as string, {id, card_id: cardId, role, content, citations, created_at: createdAt});
       return {rows: [], rowsAffected: 1};
     }
@@ -140,6 +161,9 @@ class MemoryDatabase implements Database {
         throw new Error('cursor advance failed');
       }
       const [sectionId, status, nextChunkIndex, errorMessage, updatedAt] = params;
+      if (!this.state.outlineNodes.has(sectionId as string)) {
+        throw new Error('FOREIGN KEY constraint failed: generation_state.section_id');
+      }
       this.state.generationStates.set(sectionId as string, {
         section_id: sectionId,
         status,
@@ -245,7 +269,15 @@ const card: ConceptCard = {
 
 async function createReadyRepositories(database = new MemoryDatabase()) {
   await migrateDatabase(database);
-  return {database, repositories: createRepositories(database)};
+  const repositories = createRepositories(database);
+  await repositories.insertBook(book);
+  await database.execute(
+    `INSERT INTO outline_nodes (
+      id, book_id, parent_id, title, level, body, child_ids, status, chunk_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [card.sectionId, book.id, null, 'Section', 1, 'Body', '[]', 'queued', 0],
+  );
+  return {database, repositories};
 }
 
 describe('SQLite repositories', () => {
@@ -256,14 +288,46 @@ describe('SQLite repositories', () => {
 
     expect(database.foreignKeysEnabled).toBe(true);
     expect(database.userVersion).toBe(1);
-    expect(database.statements.join('\n')).toContain('CREATE TABLE IF NOT EXISTS books');
-    expect(database.statements.join('\n')).toContain('CREATE TABLE IF NOT EXISTS tts_cache');
+    const statements = database.statements.join('\n');
+    for (const table of [
+      'books',
+      'outline_nodes',
+      'cards',
+      'chat_messages',
+      'generation_state',
+      'tts_cache',
+    ]) {
+      expect(statements).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    }
+  });
+
+  it('retries database initialization after a failed open', async () => {
+    const rows = [{user_version: 0}];
+    const nativeDatabase = {
+      executeSql: jest.fn(async (sql: string) => [
+        {
+          rows: {
+            length: sql === 'PRAGMA user_version' ? rows.length : 0,
+            item: (index: number) => rows[index],
+          },
+          rowsAffected: 0,
+        },
+      ]),
+      sqlBatch: jest.fn(async () => undefined),
+    };
+    mockNativeOpenDatabase
+      .mockRejectedValueOnce(new Error('first open failed'))
+      .mockResolvedValueOnce(nativeDatabase);
+
+    await expect(openDatabase()).rejects.toThrow('first open failed');
+    await expect(openDatabase()).resolves.toBeDefined();
+
+    expect(mockNativeOpenDatabase).toHaveBeenCalledTimes(2);
   });
 
   it('round trips JSON array fields for books and cards', async () => {
     const {repositories} = await createReadyRepositories();
 
-    await repositories.insertBook(book);
     await repositories.insertCard(card);
 
     await expect(repositories.getBook(book.id)).resolves.toMatchObject({tags: ['math', 'notes']});
@@ -280,7 +344,6 @@ describe('SQLite repositories', () => {
 
   it('persists and retrieves the last-read card for a book', async () => {
     const {repositories} = await createReadyRepositories();
-    await repositories.insertBook(book);
 
     await repositories.setLastReadCard(book.id, card.id);
 

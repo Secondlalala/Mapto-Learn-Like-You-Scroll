@@ -59,6 +59,15 @@ describe('generated card schema', () => {
     ['malformed formula delimiter', [{...validCard('section_overview', 'Overview'), formula: '$x=y'}]],
     ['Unicode formula substitute', [{...validCard('section_overview', 'Overview'), formula: '$x≤y$'}]],
     ['formula explanation without LaTeX notation', [{...validCard('section_overview', 'Overview'), formulaExplanation: 'x means input'}]],
+    ['bare equality in prose', [{...validCard('section_overview', 'Overview'), simpleExplanation: 'The relation is x = y.'}]],
+    ['bare formula in a question', [{...validCard('section_overview', 'Overview'), questions: ['Is x = y?', 'How?', 'Why?']}]],
+    ['bare TeX command in prose', [{...validCard('section_overview', 'Overview'), fable: 'Compute \\frac{x}{y} before continuing.'}]],
+    ['bare compact exponent in prose', [{...validCard('section_overview', 'Overview'), oneSentence: 'The result grows like x^2.'}]],
+    ['bare compact sum in prose', [{...validCard('section_overview', 'Overview'), simpleExplanation: 'Combine the terms as a+b before continuing.'}]],
+    ['bare lowercase division in prose', [{...validCard('section_overview', 'Overview'), simpleExplanation: 'Use a/b as the ratio.'}]],
+    ['bare implicit multiplication in prose', [{...validCard('section_overview', 'Overview'), oneSentence: 'The total is 2x.'}]],
+    ['bare superscript exponent in prose', [{...validCard('section_overview', 'Overview'), fable: 'The area follows x² in the story.'}]],
+    ['bare Unicode math minus in prose', [{...validCard('section_overview', 'Overview'), simpleExplanation: 'The difference is x−y.'}]],
   ])('rejects %s', (_label, cards) => {
     expect(() => loadSchema().parseGeneratedCards(JSON.stringify(cards))).toThrow(
       expect.objectContaining({name: 'DeepSeekSchemaError', retryable: true}),
@@ -73,4 +82,16 @@ describe('generated card schema', () => {
       );
     },
   );
+
+  it('accepts ordinary prose and formulas that use standard delimiters', () => {
+    const card = {
+      ...validCard('section_overview', 'Overview'),
+      simpleExplanation: 'Use C++, A/B testing, and/or version 2.0. The mathematical relation is $x=y$.',
+      fable: 'A plain R&D story about two teams and their well-being notes.',
+      formula: '',
+      formulaExplanation: '',
+    };
+
+    expect(loadSchema().parseGeneratedCards(JSON.stringify([card]))).toEqual([card]);
+  });
 });

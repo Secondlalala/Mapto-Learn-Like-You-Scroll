@@ -196,6 +196,11 @@ export interface Repositories {
   listMessages(cardId: string): Promise<ChatMessage[]>;
   insertMessage(message: ChatMessage): Promise<void>;
   getGenerationState(sectionId: string): Promise<GenerationState | null>;
+  claimSectionForGeneration(
+    sectionId: string,
+    claimToken: string,
+    updatedAt: string,
+  ): Promise<{section: OutlineNode; previousCursor: number} | null>;
   setGenerationState(state: GenerationState): Promise<void>;
   saveCardsAndAdvance(sectionId: string, cards: ConceptCard[], nextChunkIndex: number, updatedAt?: string): Promise<void>;
   setLastReadCard(bookId: string, cardId: string): Promise<void>;
@@ -310,6 +315,56 @@ export function createRepositories(database: Database): Repositories {
     async getGenerationState(sectionId) {
       const result = await database.execute('SELECT * FROM generation_state WHERE section_id = ?', [sectionId]);
       return result.rows[0] ? toGenerationState(result.rows[0]) : null;
+    },
+
+    async claimSectionForGeneration(sectionId, claimToken, updatedAt) {
+      await database.transaction(async transaction => {
+        await transaction.execute(
+          `UPDATE outline_nodes
+           SET status = 'generating'
+           WHERE id = ? AND status IN ('queued', 'failed')`,
+          [sectionId],
+        );
+        await transaction.execute(
+          `INSERT INTO generation_state (
+             section_id, status, next_chunk_index, error_message, error_code, updated_at
+           )
+           SELECT
+             outline_nodes.id,
+             'generating',
+             COALESCE(generation_state.next_chunk_index, outline_nodes.chunk_index),
+             NULL,
+             ?,
+             ?
+           FROM outline_nodes
+           LEFT JOIN generation_state ON generation_state.section_id = outline_nodes.id
+           WHERE outline_nodes.id = ? AND changes() = 1
+           ON CONFLICT(section_id) DO UPDATE SET
+             status = excluded.status,
+             next_chunk_index = excluded.next_chunk_index,
+             error_message = NULL,
+             error_code = excluded.error_code,
+             updated_at = excluded.updated_at`,
+          [claimToken, updatedAt, sectionId],
+        );
+      });
+
+      const state = await database.execute('SELECT * FROM generation_state WHERE section_id = ?', [sectionId]);
+      if (!state.rows[0] || state.rows[0].error_code !== claimToken) {
+        return null;
+      }
+      const section = await database.execute('SELECT * FROM outline_nodes WHERE id = ?', [sectionId]);
+      if (!section.rows[0]) {
+        return null;
+      }
+      await database.execute(
+        'UPDATE generation_state SET error_code = NULL WHERE section_id = ? AND error_code = ?',
+        [sectionId, claimToken],
+      );
+      return {
+        section: toOutlineNode(section.rows[0]),
+        previousCursor: Number(state.rows[0].next_chunk_index),
+      };
     },
 
     async setGenerationState(state) {

@@ -48,6 +48,11 @@ describe('secure DeepSeek settings', () => {
 
   it.each([
     [{apiBase: 'http://api.deepseek.com'}, 'HTTPS'],
+    [{apiBase: 'https://api.deepseek.com.evil.example'}, 'official DeepSeek API origin'],
+    [{apiBase: 'https://chat.api.deepseek.com'}, 'official DeepSeek API origin'],
+    [{apiBase: 'https://user:password@api.deepseek.com'}, 'official DeepSeek API origin'],
+    [{apiBase: 'https://api.deepseek.com:8443'}, 'official DeepSeek API origin'],
+    [{apiBase: 'https://api.deepseek.com/v1'}, 'official DeepSeek API origin'],
     [{temperature: -0.1}, 'temperature'],
     [{temperature: 2.1}, 'temperature'],
     [{timeoutMs: 999}, 'timeout'],
@@ -75,6 +80,21 @@ describe('secure DeepSeek settings', () => {
     expect((error as Error).message).toContain(expectedMessage);
     expect((error as Error).message).not.toContain(settings.apiKey);
     expect(adapter.write).not.toHaveBeenCalled();
+  });
+
+  it('accepts and canonicalizes the official origin with the default HTTPS port', async () => {
+    const adapter = {read: jest.fn(), write: jest.fn<Promise<void>, [string]>(async () => undefined)};
+    const store = loadSecureSettings().createSecureSettings(adapter);
+
+    await store.setDeepSeekSettings({
+      apiKey: 'test-key',
+      apiBase: 'https://API.DEEPSEEK.COM:443/',
+      model: 'deepseek-chat',
+      temperature: 0.3,
+      timeoutMs: 30_000,
+    });
+
+    expect(JSON.parse(adapter.write.mock.calls[0][0]).apiBase).toBe('https://api.deepseek.com');
   });
 
   it('returns a typed actionable error when the secure key is missing or blank', async () => {

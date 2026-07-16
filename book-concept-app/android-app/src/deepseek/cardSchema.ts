@@ -49,18 +49,37 @@ const requiredTextFields: Array<keyof GeneratedCard> = [
 
 const unicodeFormulaSubstitutes = /[×÷≤≥≠≈√∑∫∞]/u;
 const latexSegment = /\$\$[^$]+\$\$|\$(?!\$)[^$\r\n]+\$/g;
+const bareTexCommand = /\\(?:frac|dfrac|tfrac|sqrt|sum|prod|int|lim|mathrm|mathbf|begin|end)\b/;
+const bareRelation = /[\p{L}\p{N}_.)]+\s*(?:=|!=|<=|>=|<|>)\s*[\p{L}\p{N}_(.-]+/u;
+const spacedArithmetic = /(?:\b[A-Za-z]|\d+(?:\.\d+)?)\s+[+*/^-]\s+(?:[A-Za-z]\b|\d)/;
+const compactExponent = /(?:\b[A-Za-z]|\d+(?:\.\d+)?)\s*\^\s*(?:[A-Za-z]\b|\d)/;
+const compactSum = /\b[A-Za-z]\s*\+\s*(?:[A-Za-z]\b|\d)/;
+const compactLowercaseDivision = /\b[a-z]\s*\/\s*[a-z]\b/;
+const implicitMultiplication = /\b\d+(?:\.\d+)?[a-z]\b/;
+const superscriptExponent = /\b[A-Za-z][\u00b2\u00b3\u00b9\u2070-\u2079]/;
+const unicodeMinusExpression = /\b[A-Za-z]\s*\u2212\s*[A-Za-z]\b/;
 
 function fail(message: string): never {
   throw new DeepSeekSchemaError(message);
 }
 
-function hasValidLatex(value: string, requireSegment: boolean): boolean {
+export function hasValidFormulaNotation(value: string, requireSegment = false): boolean {
   if (value.includes('```') || unicodeFormulaSubstitutes.test(value)) {
     return false;
   }
   const matches = value.match(latexSegment) ?? [];
   const withoutSegments = value.replace(latexSegment, '');
-  return !withoutSegments.includes('$') && (!requireSegment || matches.length > 0);
+  return !withoutSegments.includes('$') &&
+    !bareTexCommand.test(withoutSegments) &&
+    !bareRelation.test(withoutSegments) &&
+    !spacedArithmetic.test(withoutSegments) &&
+    !compactExponent.test(withoutSegments) &&
+    !compactSum.test(withoutSegments) &&
+    !compactLowercaseDivision.test(withoutSegments) &&
+    !implicitMultiplication.test(withoutSegments) &&
+    !superscriptExponent.test(withoutSegments) &&
+    !unicodeMinusExpression.test(withoutSegments) &&
+    (!requireSegment || matches.length > 0);
 }
 
 function requireStringArray(value: unknown, field: string): string[] {
@@ -96,15 +115,15 @@ function validateCard(value: unknown, index: number): GeneratedCard {
   const formula = card.formula as string;
   const formulaExplanation = card.formulaExplanation as string;
   if (formula.trim()) {
-    if (!formulaExplanation.trim() || !hasValidLatex(formula, true) || !hasValidLatex(formulaExplanation, true)) {
+    if (!formulaExplanation.trim() || !hasValidFormulaNotation(formula, true) || !hasValidFormulaNotation(formulaExplanation, true)) {
       fail(`Card ${index} formula fields must use balanced standard LaTeX delimiters.`);
     }
   } else if (formulaExplanation.trim()) {
     fail(`Card ${index} cannot explain an empty formula.`);
   }
 
-  for (const field of requiredTextFields) {
-    if (!hasValidLatex(card[field] as string, false)) {
+  for (const field of ['title', 'oneSentence', 'simpleExplanation', 'fable'] as const) {
+    if (!hasValidFormulaNotation(card[field] as string)) {
       fail(`Card ${index} field ${field} contains invalid formula notation.`);
     }
   }
@@ -114,6 +133,11 @@ function validateCard(value: unknown, index: number): GeneratedCard {
   const questions = requireStringArray(card.questions, 'questions');
   if (questions.length !== 3) {
     fail(`Card ${index} must have exactly three questions.`);
+  }
+  for (const textItem of [...prerequisites, ...relatedConcepts, ...questions]) {
+    if (!hasValidFormulaNotation(textItem)) {
+      fail(`Card ${index} contains invalid formula notation in a text list.`);
+    }
   }
 
   return {

@@ -27,6 +27,7 @@ class MemoryDatabase implements Database {
   public readonly transactionBatches: string[][] = [];
 
   private activeTransactionStatements: string[] | null = null;
+  private lastConditionalClaimSucceeded = false;
 
   private state = {
     books: new Map<string, Row>(),
@@ -228,6 +229,24 @@ class MemoryDatabase implements Database {
       if (this.failCursorAdvance) {
         throw new Error('cursor advance failed');
       }
+      if (normalized.includes('SELECT OUTLINE_NODES.ID')) {
+        const [claimToken, updatedAt, sectionId] = params;
+        const claimSucceeded = this.lastConditionalClaimSucceeded;
+        if (claimSucceeded) {
+          const outlineNode = this.state.outlineNodes.get(sectionId as string)!;
+          const existingState = this.state.generationStates.get(sectionId as string);
+          this.state.generationStates.set(sectionId as string, {
+            section_id: sectionId,
+            status: 'generating',
+            next_chunk_index: existingState?.next_chunk_index ?? outlineNode.chunk_index,
+            error_message: null,
+            error_code: claimToken,
+            updated_at: updatedAt,
+          });
+        }
+        this.lastConditionalClaimSucceeded = false;
+        return {rows: [], rowsAffected: claimSucceeded ? 1 : 0};
+      }
       const [sectionId, status, nextChunkIndex] = params;
       const errorMessage = params.length === 6 ? params[3] : null;
       const errorCode = params.length === 6 ? params[4] : null;
@@ -249,6 +268,15 @@ class MemoryDatabase implements Database {
       if (this.failCursorAdvance) {
         throw new Error('cursor advance failed');
       }
+      if (normalized.startsWith('UPDATE GENERATION_STATE SET ERROR_CODE = NULL')) {
+        const [sectionId, claimToken] = params;
+        const claimedState = this.state.generationStates.get(sectionId as string);
+        if (claimedState && claimedState.error_code === claimToken) {
+          claimedState.error_code = null;
+          return {rows: [], rowsAffected: 1};
+        }
+        return {rows: [], rowsAffected: 0};
+      }
       const [status, nextChunkIndex, updatedAt, sectionId] = params;
       const state = this.state.generationStates.get(sectionId as string);
       if (state) {
@@ -259,6 +287,15 @@ class MemoryDatabase implements Database {
       return {rows: [], rowsAffected: state ? 1 : 0};
     }
     if (normalized.startsWith('UPDATE OUTLINE_NODES SET')) {
+      if (normalized.includes("STATUS IN ('QUEUED', 'FAILED')")) {
+        const claimSectionId = params[0] as string;
+        const claimNode = this.state.outlineNodes.get(claimSectionId);
+        this.lastConditionalClaimSucceeded = claimNode?.status === 'queued' || claimNode?.status === 'failed';
+        if (this.lastConditionalClaimSucceeded && claimNode) {
+          claimNode.status = 'generating';
+        }
+        return {rows: [], rowsAffected: this.lastConditionalClaimSucceeded ? 1 : 0};
+      }
       const [status] = params;
       const chunkIndex = params.length === 3 ? params[1] : undefined;
       const sectionId = params.length === 3 ? params[2] : params[1];
@@ -410,6 +447,10 @@ describe('SQLite repositories', () => {
     expect(database.transactionBatches[0]).toEqual(expect.arrayContaining([
       expect.stringContaining('CREATE TABLE IF NOT EXISTS books'),
       expect.stringContaining('CREATE TABLE IF NOT EXISTS outline_nodes'),
+      'ALTER TABLE outline_nodes ADD COLUMN start_offset INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE outline_nodes ADD COLUMN end_offset INTEGER NOT NULL DEFAULT 0',
+      expect.stringContaining('ALTER TABLE cards ADD COLUMN card_type'),
+      'ALTER TABLE generation_state ADD COLUMN error_code TEXT',
       'PRAGMA user_version = 3',
     ]));
     expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 3');
@@ -612,6 +653,48 @@ describe('SQLite repositories', () => {
       status: 'failed',
       nextChunkIndex: 4,
       errorCode: 'deepseek_network_error',
+    });
+  });
+
+  it('transactionally claims only queued or failed sections for generation', async () => {
+    const {database, repositories} = await createReadyRepositories();
+    const claimRepositories = repositories as unknown as typeof repositories & {
+      claimSectionForGeneration(
+        sectionId: string,
+        claimToken: string,
+        updatedAt: string,
+      ): Promise<{section: OutlineNode; previousCursor: number} | null>;
+    };
+    await repositories.setGenerationState({
+      sectionId: card.sectionId,
+      status: 'failed',
+      nextChunkIndex: 4,
+      errorMessage: 'Retry',
+      errorCode: 'retryable',
+      updatedAt: card.createdAt,
+    });
+    const transactionsBeforeClaim = database.transactionCount;
+
+    await expect(claimRepositories.claimSectionForGeneration(
+      card.sectionId,
+      'claim:one',
+      '2026-07-16T01:00:00.000Z',
+    )).resolves.toMatchObject({
+      section: {id: card.sectionId, status: 'generating'},
+      previousCursor: 4,
+    });
+    await expect(claimRepositories.claimSectionForGeneration(
+      card.sectionId,
+      'claim:two',
+      '2026-07-16T01:00:01.000Z',
+    )).resolves.toBeNull();
+
+    expect(database.transactionCount).toBe(transactionsBeforeClaim + 2);
+    await expect(repositories.getGenerationState(card.sectionId)).resolves.toMatchObject({
+      status: 'generating',
+      nextChunkIndex: 4,
+      errorMessage: null,
+      errorCode: null,
     });
   });
 

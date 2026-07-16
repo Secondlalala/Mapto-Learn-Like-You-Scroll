@@ -5,7 +5,7 @@ export interface DeepSeekMessage {
   content: string;
 }
 
-export function buildGenerationMessages(node: OutlineNode): DeepSeekMessage[] {
+export function buildGenerationMessages(node: OutlineNode, chapterTitle = node.title): DeepSeekMessage[] {
   const system = [
     'Create a coherent Chinese learning-card sequence from exactly one bounded source section.',
     'Return a strict JSON array only: no Markdown fences, no commentary, and no extra keys.',
@@ -19,7 +19,7 @@ export function buildGenerationMessages(node: OutlineNode): DeepSeekMessage[] {
     'When formula is non-empty, formulaExplanation must explain every symbol using LaTeX notation.',
   ].join('\n');
   const context = JSON.stringify({
-    chapter: node.title,
+    chapter: chapterTitle,
     sectionTitle: node.title,
     sourceText: node.body,
   });

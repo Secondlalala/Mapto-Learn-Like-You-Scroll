@@ -1,12 +1,12 @@
 import {createRepositories, type Repositories} from '../data/repositories';
 import {openDatabase} from '../data/database';
-import type {ChatMessage, ConceptCard, GenerationState} from '../domain/models';
-import {DeepSeekSchemaError, parseGeneratedCards} from './cardSchema';
+import type {ChatMessage, ConceptCard, GenerationState, OutlineNode} from '../domain/models';
+import {DeepSeekSchemaError, hasValidFormulaNotation, parseGeneratedCards} from './cardSchema';
 import {createDeepSeekClient, type DeepSeekClient} from './client';
 import {buildChatMessages, buildGenerationMessages, type DeepSeekMessage} from './prompts';
 
 type GenerationRepositories = Pick<Repositories,
-  'getOutlineNode' | 'listOutlineNodes' | 'getGenerationState' | 'setGenerationState' |
+  'claimSectionForGeneration' | 'listOutlineNodes' | 'setGenerationState' |
   'saveCardsAndAdvance' | 'getCard' | 'insertMessage'>;
 
 export interface GenerationResult {
@@ -18,6 +18,7 @@ export interface DeepSeekGeneratorDependencies {
   repositories: GenerationRepositories;
   client: DeepSeekClient;
   createId(): string;
+  createClaimToken(): string;
   now(): string;
 }
 
@@ -41,13 +42,19 @@ export class DeepSeekChatValidationError extends Error {
   }
 }
 
-const unicodeFormulaSubstitutes = /[×÷≤≥≠≈√∑∫∞]/u;
-const latexSegment = /\$\$[^$]+\$\$|\$(?!\$)[^$\r\n]+\$/g;
+export class DeepSeekSectionNotClaimableError extends Error {
+  readonly code = 'deepseek_section_not_claimable';
+  readonly retryable = false;
+
+  constructor() {
+    super('This section is already generating or completed.');
+    this.name = 'DeepSeekSectionNotClaimableError';
+  }
+}
 
 function validateChatAnswer(content: string): string {
   const trimmed = content.trim();
-  const withoutLatex = trimmed.replace(latexSegment, '');
-  if (!trimmed || trimmed.includes('```') || unicodeFormulaSubstitutes.test(trimmed) || withoutLatex.includes('$')) {
+  if (!trimmed || !hasValidFormulaNotation(trimmed)) {
     throw new DeepSeekChatValidationError();
   }
   return trimmed;
@@ -76,25 +83,37 @@ function safeFailure(error: unknown): Pick<GenerationState, 'errorCode' | 'error
   };
 }
 
+function resolveChapterTitle(section: OutlineNode, outline: OutlineNode[]): string {
+  const nodesById = new Map(outline.map(node => [node.id, node]));
+  const visited = new Set([section.id]);
+  let chapter = section;
+  while (chapter.parentId) {
+    const parent = nodesById.get(chapter.parentId);
+    if (!parent || visited.has(parent.id)) {
+      break;
+    }
+    visited.add(parent.id);
+    chapter = parent;
+  }
+  return chapter.title;
+}
+
 export function createDeepSeekGenerator(dependencies: DeepSeekGeneratorDependencies) {
   async function generateSectionImpl(sectionId: string): Promise<GenerationResult> {
-    const section = await dependencies.repositories.getOutlineNode(sectionId);
-    if (!section) {
-      throw new DeepSeekGenerationError('The selected section no longer exists.');
-    }
-    const previousState = await dependencies.repositories.getGenerationState(sectionId);
-    const previousCursor = previousState?.nextChunkIndex ?? section.chunkIndex;
-    await dependencies.repositories.setGenerationState({
+    const claim = await dependencies.repositories.claimSectionForGeneration(
       sectionId,
-      status: 'generating',
-      nextChunkIndex: previousCursor,
-      errorMessage: null,
-      errorCode: null,
-      updatedAt: dependencies.now(),
-    });
+      `claim:${dependencies.createClaimToken()}`,
+      dependencies.now(),
+    );
+    if (!claim) {
+      throw new DeepSeekSectionNotClaimableError();
+    }
+    const {section, previousCursor} = claim;
 
     try {
-      const messages = buildGenerationMessages(section);
+      const outline = await dependencies.repositories.listOutlineNodes(section.bookId);
+      const chapterTitle = resolveChapterTitle(section, outline);
+      const messages = buildGenerationMessages(section, chapterTitle);
       const initialContent = await dependencies.client.complete(messages);
       let generated;
       try {
@@ -113,6 +132,8 @@ export function createDeepSeekGenerator(dependencies: DeepSeekGeneratorDependenc
         bookId: section.bookId,
         sectionId: section.id,
         ...card,
+        chapter: chapterTitle,
+        sourceText: section.body,
         isFavorite: false,
         createdAt,
       }));
@@ -198,6 +219,7 @@ async function defaultGenerator() {
     repositories,
     client: createDeepSeekClient(),
     createId: defaultId,
+    createClaimToken: defaultId,
     now: () => new Date().toISOString(),
   });
 }

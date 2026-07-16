@@ -67,8 +67,19 @@ function normalizeSettings(settings: DeepSeekSettings): DeepSeekSettings {
   } catch {
     throw new DeepSeekSettingsValidationError('API base must be a valid HTTPS URL.');
   }
-  if (baseUrl.protocol !== 'https:' || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
+  if (baseUrl.protocol !== 'https:') {
     throw new DeepSeekSettingsValidationError('API base must be a valid HTTPS URL.');
+  }
+  if (
+    baseUrl.hostname !== 'api.deepseek.com' ||
+    baseUrl.port ||
+    baseUrl.pathname !== '/' ||
+    baseUrl.username ||
+    baseUrl.password ||
+    baseUrl.search ||
+    baseUrl.hash
+  ) {
+    throw new DeepSeekSettingsValidationError('API base must use the official DeepSeek API origin.');
   }
 
   const model = typeof settings.model === 'string' ? settings.model.trim() : '';
@@ -84,7 +95,7 @@ function normalizeSettings(settings: DeepSeekSettings): DeepSeekSettings {
 
   return {
     apiKey,
-    apiBase: baseUrl.toString().replace(/\/$/, ''),
+    apiBase: baseUrl.origin,
     model,
     temperature: settings.temperature,
     timeoutMs: settings.timeoutMs,

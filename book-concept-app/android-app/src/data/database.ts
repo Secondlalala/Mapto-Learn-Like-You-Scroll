@@ -71,9 +71,7 @@ const migrationV1 = [
     body TEXT NOT NULL,
     child_ids TEXT NOT NULL,
     status TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL DEFAULT 0,
-    start_offset INTEGER NOT NULL DEFAULT 0,
-    end_offset INTEGER NOT NULL DEFAULT 0
+    chunk_index INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS cards (
     id TEXT PRIMARY KEY NOT NULL,
@@ -85,17 +83,6 @@ const migrationV1 = [
     key_points TEXT NOT NULL,
     source_excerpt TEXT NOT NULL,
     formulae TEXT NOT NULL,
-    card_type TEXT NOT NULL,
-    chapter TEXT NOT NULL,
-    source_text TEXT NOT NULL,
-    one_sentence TEXT NOT NULL,
-    simple_explanation TEXT NOT NULL,
-    fable TEXT NOT NULL,
-    formula TEXT NOT NULL,
-    formula_explanation TEXT NOT NULL,
-    prerequisites TEXT NOT NULL,
-    related_concepts TEXT NOT NULL,
-    questions TEXT NOT NULL,
     is_favorite INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
@@ -112,7 +99,6 @@ const migrationV1 = [
     status TEXT NOT NULL,
     next_chunk_index INTEGER NOT NULL,
     error_message TEXT,
-    error_code TEXT,
     updated_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS tts_cache (
@@ -161,7 +147,7 @@ export async function migrateDatabase(database: Database): Promise<void> {
   const userVersion = Number(version.rows[0]?.user_version ?? 0);
   if (userVersion < 3) {
     const migration = userVersion < 1
-      ? migrationV1
+      ? [...migrationV1, ...migrationV2, ...migrationV3]
       : [...(userVersion < 2 ? migrationV2 : []), ...migrationV3];
     await database.transaction(async transaction => {
       for (const statement of migration) {

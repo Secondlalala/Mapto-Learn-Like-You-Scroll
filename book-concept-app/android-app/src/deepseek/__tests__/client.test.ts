@@ -55,6 +55,7 @@ describe('DeepSeek transport client', () => {
 
     expect(fetchImpl).toHaveBeenCalledWith('https://api.deepseek.com/chat/completions', expect.objectContaining({
       method: 'POST',
+      redirect: 'error',
       headers: {'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}`},
       body: JSON.stringify({model: settings.model, temperature: settings.temperature, messages}),
     }));
@@ -107,6 +108,29 @@ describe('DeepSeek transport client', () => {
     expect(deps.sleep.mock.calls.flat()).toEqual([1_000, 2_000, 4_000]);
   });
 
+  it.each([501, 505])('does not retry non-transient HTTP %s responses', async status => {
+    const fetchImpl = jest.fn(async () => response(status));
+    const deps = dependencies(fetchImpl);
+
+    await expect(loadClient().createDeepSeekClient(deps).complete([])).rejects.toMatchObject({
+      name: 'DeepSeekApiError',
+      status,
+      retryable: false,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(deps.sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([500, 502, 503, 504])('retries explicit transient HTTP %s responses', async status => {
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(response(status))
+      .mockResolvedValueOnce(response(200, {choices: [{message: {content: 'done'}}]}));
+    const deps = dependencies(fetchImpl);
+
+    await expect(loadClient().createDeepSeekClient(deps).complete([])).resolves.toBe('done');
+    expect(deps.sleep.mock.calls.flat()).toEqual([1_000]);
+  });
+
   it('aborts on the configured timeout and returns a typed retryable network error', async () => {
     const signal = {aborted: false};
     const abort = jest.fn(() => {
@@ -126,6 +150,37 @@ describe('DeepSeek transport client', () => {
     });
 
     await expect(loadClient().createDeepSeekClient(deps).complete([])).rejects.toMatchObject({
+      name: 'DeepSeekNetworkError',
+      code: 'deepseek_timeout',
+      retryable: true,
+    });
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the timeout active through response JSON parsing and validation', async () => {
+    let timeoutCallback: (() => void) | undefined;
+    let rejectBody: ((error: Error) => void) | undefined;
+    const body = new Promise<unknown>((_resolve, reject) => {
+      rejectBody = reject;
+    });
+    const signal = {aborted: false};
+    const abort = jest.fn(() => {
+      signal.aborted = true;
+      rejectBody?.(Object.assign(new Error('body aborted'), {name: 'AbortError'}));
+    });
+    const fetchImpl = jest.fn(async () => ({ok: true, status: 200, json: () => body}));
+    const deps = dependencies(fetchImpl);
+    deps.createAbortController = () => ({signal, abort});
+    deps.timers.setTimeout = jest.fn<number, [() => void, number]>((callback, _delayMs) => {
+      timeoutCallback = callback;
+      return 1;
+    });
+
+    const completion = loadClient().createDeepSeekClient(deps).complete([]);
+    await Promise.resolve();
+    timeoutCallback?.();
+
+    await expect(completion).rejects.toMatchObject({
       name: 'DeepSeekNetworkError',
       code: 'deepseek_timeout',
       retryable: true,

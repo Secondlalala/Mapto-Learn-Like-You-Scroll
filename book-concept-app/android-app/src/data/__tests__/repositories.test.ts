@@ -23,6 +23,10 @@ class MemoryDatabase implements Database {
   public foreignKeysEnabled = false;
   public failCursorAdvance = false;
   public failOutlineInsert = false;
+  public failMigrationStatement: string | null = null;
+  public readonly transactionBatches: string[][] = [];
+
+  private activeTransactionStatements: string[] | null = null;
 
   private state = {
     books: new Map<string, Row>(),
@@ -35,7 +39,22 @@ class MemoryDatabase implements Database {
 
   async execute(sql: string, params: unknown[] = []): Promise<QueryResult> {
     this.statements.push(sql);
+    this.activeTransactionStatements?.push(sql);
     const normalized = sql.replace(/\s+/g, ' ').trim().toUpperCase();
+
+    const insert = /INSERT\s+INTO\s+\w+\s*\(([\s\S]*?)\)\s*VALUES\s*\(([\s\S]*?)\)/i.exec(sql);
+    if (insert) {
+      const columnCount = insert[1].split(',').length;
+      const valueCount = insert[2].split(',').length;
+      const placeholderCount = (insert[2].match(/\?/g) ?? []).length;
+      if (columnCount !== valueCount || params.length !== placeholderCount) {
+        throw new Error('INSERT column and parameter count mismatch');
+      }
+    }
+
+    if (this.failMigrationStatement && normalized === this.failMigrationStatement) {
+      throw new Error(`Migration failed: ${normalized}`);
+    }
 
     if (normalized === 'PRAGMA FOREIGN_KEYS = ON') {
       this.foreignKeysEnabled = true;
@@ -235,6 +254,9 @@ class MemoryDatabase implements Database {
 
   async transaction<T>(work: (database: Database) => Promise<T>): Promise<T> {
     this.transactionCount += 1;
+    const previousTransactionStatements = this.activeTransactionStatements;
+    const transactionStatements: string[] = [];
+    this.activeTransactionStatements = transactionStatements;
     const copyRows = (rows: Map<string, Row>) =>
       new Map(Array.from(rows, ([key, row]) => [key, {...row}]));
     const snapshot = {
@@ -244,12 +266,20 @@ class MemoryDatabase implements Database {
       messages: copyRows(this.state.messages),
       generationStates: copyRows(this.state.generationStates),
       ttsCache: copyRows(this.state.ttsCache),
+      userVersion: this.userVersion,
+      foreignKeysEnabled: this.foreignKeysEnabled,
     };
     try {
-      return await work(this);
+      const result = await work(this);
+      this.transactionBatches.push(transactionStatements);
+      return result;
     } catch (error) {
       this.state = snapshot;
+      this.userVersion = snapshot.userVersion;
+      this.foreignKeysEnabled = snapshot.foreignKeysEnabled;
       throw error;
+    } finally {
+      this.activeTransactionStatements = previousTransactionStatements;
     }
   }
 }
@@ -299,7 +329,7 @@ async function createReadyRepositories(database = new MemoryDatabase()) {
   await repositories.insertBook(book);
   await database.execute(
     `INSERT INTO outline_nodes (
-      id, book_id, parent_id, title, level, body, child_ids, status, chunk_index
+      id, book_id, parent_id, title, level, body, child_ids, status, chunk_index, start_offset, end_offset
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [card.sectionId, book.id, null, 'Section', 1, 'Body', '[]', 'queued', 0, 0, 4],
   );
@@ -325,6 +355,13 @@ describe('SQLite repositories', () => {
     ]) {
       expect(statements).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
     }
+    expect(database.transactionBatches).toHaveLength(1);
+    expect(database.transactionBatches[0]).toEqual(expect.arrayContaining([
+      expect.stringContaining('CREATE TABLE IF NOT EXISTS books'),
+      expect.stringContaining('CREATE TABLE IF NOT EXISTS outline_nodes'),
+      'PRAGMA user_version = 2',
+    ]));
+    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 2');
   });
 
   it('upgrades an existing version 1 database without resetting it', async () => {
@@ -336,6 +373,23 @@ describe('SQLite repositories', () => {
     expect(database.userVersion).toBe(2);
     expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN start_offset');
     expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN end_offset');
+    expect(database.transactionBatches).toEqual([[
+      'ALTER TABLE outline_nodes ADD COLUMN start_offset INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE outline_nodes ADD COLUMN end_offset INTEGER NOT NULL DEFAULT 0',
+      'PRAGMA user_version = 2',
+    ]]);
+  });
+
+  it('rolls back a failed version 2 migration without advancing the schema version', async () => {
+    const database = new MemoryDatabase();
+    database.userVersion = 1;
+    database.failMigrationStatement = 'ALTER TABLE OUTLINE_NODES ADD COLUMN END_OFFSET INTEGER NOT NULL DEFAULT 0';
+
+    await expect(migrateDatabase(database)).rejects.toThrow('Migration failed');
+
+    expect(database.userVersion).toBe(1);
+    expect(database.transactionCount).toBe(1);
+    expect(database.transactionBatches).toEqual([]);
   });
 
   it('retries database initialization after a failed open', async () => {
@@ -371,27 +425,43 @@ describe('SQLite repositories', () => {
     await expect(repositories.listCards(book.id)).resolves.toEqual([card]);
   });
 
+  it('rejects outline inserts whose column and parameter counts differ', async () => {
+    const database = new MemoryDatabase();
+    await migrateDatabase(database);
+    const repositories = createRepositories(database);
+    await repositories.insertBook(book);
+
+    await expect(database.execute(
+      `INSERT INTO outline_nodes (
+        id, book_id, parent_id, title, level, body, child_ids, status, chunk_index
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['bad', book.id, null, 'Bad', 1, 'Body', '[]', 'queued', 0, 0, 4],
+    )).rejects.toThrow('parameter count');
+  });
+
   it('inserts a book and its outline atomically', async () => {
     const database = new MemoryDatabase();
     await migrateDatabase(database);
+    const transactionCountAfterMigration = database.transactionCount;
     const repositories = createRepositories(database);
     database.failOutlineInsert = true;
 
     await expect(repositories.insertBookWithOutline(book, [outlineNode])).rejects.toThrow('outline insert failed');
 
     await expect(repositories.getBook(book.id)).resolves.toBeNull();
-    expect(database.transactionCount).toBe(1);
+    expect(database.transactionCount).toBe(transactionCountAfterMigration + 1);
   });
 
   it('round trips imported outline source offsets atomically', async () => {
     const database = new MemoryDatabase();
     await migrateDatabase(database);
+    const transactionCountAfterMigration = database.transactionCount;
     const repositories = createRepositories(database);
 
     await repositories.insertBookWithOutline(book, [outlineNode]);
 
     await expect(repositories.listOutlineNodes(book.id)).resolves.toEqual([outlineNode]);
-    expect(database.transactionCount).toBe(1);
+    expect(database.transactionCount).toBe(transactionCountAfterMigration + 1);
   });
 
   it('toggles a card favorite and returns its new value', async () => {
@@ -429,6 +499,7 @@ describe('SQLite repositories', () => {
 
   it('saves cards and advances an absent generation cursor atomically', async () => {
     const {database, repositories} = await createReadyRepositories();
+    const transactionCountAfterMigration = database.transactionCount;
 
     await repositories.saveCardsAndAdvance(card.sectionId, [card], 2);
 
@@ -437,15 +508,16 @@ describe('SQLite repositories', () => {
       status: 'completed',
       nextChunkIndex: 2,
     });
-    expect(database.transactionCount).toBe(1);
+    expect(database.transactionCount).toBe(transactionCountAfterMigration + 1);
   });
 
   it('rejects a negative generation cursor before opening a transaction', async () => {
     const {database, repositories} = await createReadyRepositories();
+    const transactionCountAfterMigration = database.transactionCount;
 
     await expect(repositories.saveCardsAndAdvance(card.sectionId, [card], -1)).rejects.toThrow('Invalid generation cursor');
 
-    expect(database.transactionCount).toBe(0);
+    expect(database.transactionCount).toBe(transactionCountAfterMigration);
   });
 
   it('round trips TTS cache metadata', async () => {

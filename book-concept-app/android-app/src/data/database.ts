@@ -125,23 +125,15 @@ const migrationV2 = [
 export async function migrateDatabase(database: Database): Promise<void> {
   await database.execute('PRAGMA foreign_keys = ON');
   const version = await database.execute('PRAGMA user_version');
-  let userVersion = Number(version.rows[0]?.user_version ?? 0);
-  const existingVersion = userVersion;
-  if (userVersion < 1) {
-    for (const statement of migrationV1) {
-      await database.execute(statement);
-    }
-    await database.execute('PRAGMA user_version = 1');
-    userVersion = 1;
-  }
-
+  const userVersion = Number(version.rows[0]?.user_version ?? 0);
   if (userVersion < 2) {
-    if (existingVersion >= 1) {
-      for (const statement of migrationV2) {
-        await database.execute(statement);
+    const migration = userVersion < 1 ? migrationV1 : migrationV2;
+    await database.transaction(async transaction => {
+      for (const statement of migration) {
+        await transaction.execute(statement);
       }
-    }
-    await database.execute('PRAGMA user_version = 2');
+      await transaction.execute('PRAGMA user_version = 2');
+    });
   }
 }
 

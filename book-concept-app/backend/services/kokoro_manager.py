@@ -17,13 +17,6 @@ def start_kokoro_if_enabled() -> None:
     config = get_tts_config()
     if not config["enabled"] or config["api_style"] != "kokoro":
         return
-    from services.kokoro_worker_client import health
-
-    try:
-        health()
-        return
-    except Exception:
-        return
 
     parsed = urlparse(config["api_url"])
     host = parsed.hostname or "127.0.0.1"

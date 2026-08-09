@@ -11,6 +11,7 @@ function dependencies() {
     setDeepSeekSettings: jest.fn().mockResolvedValue(undefined),
     getTtsPreferences: jest.fn().mockResolvedValue({engine: 'offline', voice: 'zh-female', speed: 0.8}),
     setTtsPreferences: jest.fn().mockResolvedValue(undefined),
+    preloadTts: jest.fn().mockResolvedValue({modelVersion: 'sherpa-onnx-1.13.4-aishell3', sampleRate: 22050, numSpeakers: 174}),
   };
 }
 
@@ -35,8 +36,18 @@ it('persists DeepSeek and TTS choices including speed from 0.2 to 2.0', async ()
   fireEvent.press(screen.getByText('保存设置'));
   await waitFor(() => expect(deps.setDeepSeekSettings).toHaveBeenCalledWith(expect.objectContaining({apiKey: 'new-key'})));
   expect(deps.setTtsPreferences).toHaveBeenCalledWith({engine: 'system', voice: 'zh-female', speed: 0.9});
-  expect(screen.getByText('语音预加载将在离线语音模块安装后可用')).toBeTruthy();
-  expect(screen.getByText('清理语音缓存将在离线语音模块安装后可用')).toBeTruthy();
+  expect(screen.getByText('AISHELL-3 · 内置中文模型')).toBeTruthy();
+});
+
+it('preloads the bundled Chinese model and reports readiness', async () => {
+  const deps = dependencies();
+  render(<SettingsScreen dependencies={deps} />);
+  await screen.findByDisplayValue('deepseek-chat');
+
+  fireEvent.press(screen.getByText('加载离线语音模型'));
+
+  await waitFor(() => expect(deps.preloadTts).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText('模型已就绪 · 174 个音色 · 22050 Hz')).toBeTruthy();
 });
 
 it('notifies the reader generation lifecycle after secure settings save', async () => {

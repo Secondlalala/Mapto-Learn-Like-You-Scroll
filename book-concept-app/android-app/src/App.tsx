@@ -6,6 +6,7 @@ import {generateNextSection, generateSection} from './deepseek/generator';
 import {importBook, pickBookUri} from './import/importBook';
 import {getDeepSeekSettings, setDeepSeekSettings} from './settings/secureSettings';
 import {getTtsPreferences, setTtsPreferences} from './settings/ttsPreferences';
+import {createNativeTtsService} from './tts/offlineTts';
 import AppNavigator, {type AppDependencies} from './ui/navigation/AppNavigator';
 import {colors} from './ui/theme';
 
@@ -20,6 +21,7 @@ function createDependencies(repositories: Repositories): AppDependencies {
     setDeepSeekSettings,
     getTtsPreferences,
     setTtsPreferences,
+    tts: createNativeTtsService(getTtsPreferences, repositories),
   };
 }
 

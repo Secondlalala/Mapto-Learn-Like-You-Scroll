@@ -92,14 +92,30 @@ jobs:
           }
           $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk))
           try {
-            $hasBundle = $null -ne ($archive.Entries | Where-Object { $_.FullName -eq "assets/index.android.bundle" } | Select-Object -First 1)
+            $requiredEntries = @(
+              "assets/index.android.bundle",
+              "assets/vits-icefall-zh-aishell3/model.onnx",
+              "assets/vits-icefall-zh-aishell3/lexicon.txt",
+              "assets/vits-icefall-zh-aishell3/phone.fst",
+              "assets/vits-icefall-zh-aishell3/date.fst",
+              "assets/vits-icefall-zh-aishell3/number.fst",
+              "assets/vits-icefall-zh-aishell3/new_heteronym.fst",
+              "lib/arm64-v8a/libonnxruntime.so",
+              "lib/arm64-v8a/libsherpa-onnx-jni.so",
+              "assets/licenses/sherpa-onnx-APACHE-2.0.txt"
+            )
+            foreach ($entry in $requiredEntries) {
+              if (-not $archive.GetEntry($entry)) { throw "APK entry is missing: $entry" }
+            }
           } finally {
             $archive.Dispose()
           }
           if ($abis.Count -ne 1 -or $abis[0] -ne "arm64-v8a") {
             throw "Expected only arm64-v8a native libraries, found: $($abis -join ', ')"
           }
-          if (-not $hasBundle) { throw "Standalone JavaScript bundle is missing from APK" }
+          if ((Get-Item $apk).Length -lt 60MB) {
+            throw "APK is too small to contain the bundled TTS runtime and model"
+          }
           Get-FileHash $apk -Algorithm SHA256
           $artifactDirectory = Join-Path $env:GITHUB_WORKSPACE "apk-output"
           New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null

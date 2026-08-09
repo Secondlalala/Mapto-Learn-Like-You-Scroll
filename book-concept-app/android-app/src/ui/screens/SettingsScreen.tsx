@@ -4,6 +4,7 @@ import type {DeepSeekSettings} from '../../settings/secureSettings';
 import {DEFAULT_DEEPSEEK_SETTINGS} from '../../settings/secureSettings';
 import type {TtsPreferences} from '../../settings/ttsPreferences';
 import {DEFAULT_TTS_PREFERENCES} from '../../settings/ttsPreferences';
+import type {OfflineTtsStatus} from '../../tts/offlineTts';
 import {colors} from '../theme';
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
     setDeepSeekSettings(settings: DeepSeekSettings): Promise<void>;
     getTtsPreferences(): Promise<TtsPreferences>;
     setTtsPreferences(settings: TtsPreferences): Promise<void>;
+    preloadTts(): Promise<OfflineTtsStatus>;
   };
   onSaved?(): void;
 }
@@ -31,6 +33,8 @@ export default function SettingsScreen({dependencies, onSaved}: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [preloading, setPreloading] = useState(false);
+  const [ttsStatus, setTtsStatus] = useState<OfflineTtsStatus | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -68,6 +72,18 @@ export default function SettingsScreen({dependencies, onSaved}: Props) {
     } finally { setSaving(false); }
   };
 
+  const preload = async () => {
+    setPreloading(true);
+    setError(null);
+    try {
+      setTtsStatus(await dependencies.preloadTts());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '离线语音模型加载失败');
+    } finally {
+      setPreloading(false);
+    }
+  };
+
   if (loading) {return <View style={styles.center}><ActivityIndicator color={colors.accent} /></View>;}
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -90,8 +106,14 @@ export default function SettingsScreen({dependencies, onSaved}: Props) {
       <Text style={styles.label}>语速</Text>
       <View style={styles.speedRow}><Pressable accessibilityLabel="语速降低" onPress={() => changeSpeed(-0.1)} style={styles.speedButton}><Text style={styles.speedButtonText}>−</Text></Pressable><Text style={styles.speed}>{tts.speed.toFixed(1)}×</Text><Pressable accessibilityLabel="语速增加" onPress={() => changeSpeed(0.1)} style={styles.speedButton}><Text style={styles.speedButtonText}>+</Text></Pressable></View>
 
-      <View style={styles.disabled}><Text style={styles.disabledText}>语音预加载将在离线语音模块安装后可用</Text></View>
-      <View style={styles.disabled}><Text style={styles.disabledText}>清理语音缓存将在离线语音模块安装后可用</Text></View>
+      <View style={styles.modelInfo}>
+        <Text style={styles.modelName}>AISHELL-3 · 内置中文模型</Text>
+        <Text style={styles.modelDetail}>{ttsStatus ? `模型已就绪 · ${ttsStatus.numSpeakers} 个音色 · ${ttsStatus.sampleRate} Hz` : '首次朗读时自动加载，无需联网'}</Text>
+      </View>
+      <Pressable disabled={preloading || tts.engine !== 'offline'} onPress={() => { preload().catch(() => undefined); }} style={[styles.preload, (preloading || tts.engine !== 'offline') && styles.preloadDisabled]}>
+        {preloading ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+        <Text style={styles.preloadText}>{preloading ? '正在加载模型' : '加载离线语音模型'}</Text>
+      </Pressable>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {saved ? <Text style={styles.success}>设置已保存</Text> : null}
       <Pressable disabled={saving} onPress={() => { save().catch(() => undefined); }} style={[styles.save, saving && styles.saveDisabled]}><Text style={styles.saveText}>{saving ? '正在保存' : '保存设置'}</Text></Pressable>
@@ -105,6 +127,7 @@ const styles = StyleSheet.create({
   label: {fontSize: 13, color: colors.muted, marginBottom: 6}, input: {height: 46, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: 12, fontSize: 15, color: colors.text, marginBottom: 13},
   choices: {flexDirection: 'row', gap: 8, marginBottom: 14}, choice: {flex: 1, minHeight: 42, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface}, choiceSelected: {backgroundColor: colors.accentSoft, borderColor: colors.accent}, choiceText: {color: colors.muted}, choiceTextSelected: {color: colors.accent, fontWeight: '700'},
   speedRow: {height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, marginBottom: 14}, speedButton: {width: 44, height: 44, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface}, speedButtonText: {fontSize: 24, color: colors.text}, speed: {width: 58, textAlign: 'center', fontSize: 17, fontWeight: '700', color: colors.text},
-  disabled: {minHeight: 42, backgroundColor: '#ECECE8', justifyContent: 'center', paddingHorizontal: 12, marginBottom: 8}, disabledText: {fontSize: 13, color: colors.muted},
+  modelInfo: {padding: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border}, modelName: {fontSize: 14, fontWeight: '700', color: colors.text}, modelDetail: {fontSize: 12, color: colors.muted, marginTop: 4},
+  preload: {height: 44, marginTop: 8, marginBottom: 8, borderWidth: 1, borderColor: colors.accent, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface}, preloadDisabled: {opacity: 0.5}, preloadText: {fontSize: 14, fontWeight: '700', color: colors.accent},
   error: {color: colors.danger, marginVertical: 10}, success: {color: colors.accent, marginVertical: 10}, save: {height: 48, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center', marginTop: 10}, saveDisabled: {opacity: 0.55}, saveText: {color: '#FFFFFF', fontWeight: '700'},
 });

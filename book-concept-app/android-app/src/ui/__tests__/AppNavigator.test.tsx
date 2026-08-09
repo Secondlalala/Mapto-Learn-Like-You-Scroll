@@ -17,6 +17,11 @@ function dependencies() {
     setDeepSeekSettings: jest.fn(),
     getTtsPreferences: jest.fn().mockResolvedValue({engine: 'offline', voice: 'zh-female', speed: 0.8}),
     setTtsPreferences: jest.fn(),
+    tts: {
+      preload: jest.fn().mockResolvedValue({modelVersion: 'test', sampleRate: 22050, numSpeakers: 174}),
+      speak: jest.fn().mockResolvedValue(null),
+      stop: jest.fn().mockResolvedValue(undefined),
+    },
   };
 }
 

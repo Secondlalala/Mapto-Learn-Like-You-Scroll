@@ -48,3 +48,24 @@ it('flushes the latest observed offset when the card unmounts', () => {
   expect(onScrollOffset).toHaveBeenCalledTimes(1);
   expect(onScrollOffset).toHaveBeenCalledWith(cards[0], 321);
 });
+
+it('reads the card summary and the fable as separate speech requests', () => {
+  const onSpeak = jest.fn();
+  render(
+    <ConceptCard
+      card={cards[0]}
+      height={600}
+      onSpeak={onSpeak}
+      onToggleFavorite={jest.fn()}
+    />,
+  );
+
+  fireEvent.press(screen.getByLabelText(`朗读卡片 ${cards[0].title}`));
+  expect(onSpeak).toHaveBeenLastCalledWith(
+    `card:${cards[0].id}`,
+    `${cards[0].title}。${cards[0].oneSentence}。${cards[0].simpleExplanation}`,
+  );
+
+  fireEvent.press(screen.getByLabelText(`朗读寓言 ${cards[0].title}`));
+  expect(onSpeak).toHaveBeenLastCalledWith(`fable:${cards[0].id}`, cards[0].fable);
+});

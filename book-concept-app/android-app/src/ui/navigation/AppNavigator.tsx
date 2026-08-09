@@ -6,6 +6,7 @@ import type {Book, ConceptCard} from '../../domain/models';
 import type {Repositories} from '../../data/repositories';
 import type {DeepSeekSettings} from '../../settings/secureSettings';
 import type {TtsPreferences} from '../../settings/ttsPreferences';
+import type {TtsService} from '../../tts/offlineTts';
 import {createGenerationCoordinator} from '../generationCoordinator';
 import FavoritesScreen from '../screens/FavoritesScreen';
 import LibraryScreen from '../screens/LibraryScreen';
@@ -33,6 +34,7 @@ export interface AppDependencies {
   setDeepSeekSettings(settings: DeepSeekSettings): Promise<void>;
   getTtsPreferences(): Promise<TtsPreferences>;
   setTtsPreferences(settings: TtsPreferences): Promise<void>;
+  tts: TtsService;
 }
 
 interface Props {dependencies: AppDependencies}
@@ -67,12 +69,14 @@ export default function AppNavigator({dependencies}: Props) {
   const readerDependencies = useMemo(() => ({
     repositories: dependencies.repositories,
     generationCoordinator: coordinator,
-  }), [coordinator, dependencies.repositories]);
+    tts: dependencies.tts,
+  }), [coordinator, dependencies.repositories, dependencies.tts]);
   const settingsDependencies = useMemo(() => ({
     getDeepSeekSettings: dependencies.getDeepSeekSettings,
     setDeepSeekSettings: dependencies.setDeepSeekSettings,
     getTtsPreferences: dependencies.getTtsPreferences,
     setTtsPreferences: dependencies.setTtsPreferences,
+    preloadTts: dependencies.tts.preload,
   }), [dependencies]);
 
   return (

@@ -3,6 +3,7 @@ import {ActivityIndicator, BackHandler, FlatList, Pressable, StyleSheet, Text, V
 import {ListTree} from 'lucide-react-native';
 import type {Book, ConceptCard as Card, GenerationState, OutlineNode} from '../../domain/models';
 import type {GenerationCoordinator} from '../generationCoordinator';
+import type {TtsService} from '../../tts/offlineTts';
 import ConceptCard from '../components/ConceptCard';
 import OutlineDrawer from '../components/OutlineDrawer';
 import {colors} from '../theme';
@@ -20,6 +21,7 @@ export interface ReaderDependencies {
     setCardScrollOffset(cardId: string, offset: number): Promise<void>;
   };
   generationCoordinator: GenerationCoordinator;
+  tts: TtsService;
 }
 
 interface Props {
@@ -63,6 +65,8 @@ export default function ReaderScreen({bookId, initialCardId, generationRevision 
   const [generationTarget, setGenerationTarget] = useState<OutlineNode | null>(null);
   const [generationFailure, setGenerationFailure] = useState<GenerationFailure | null>(null);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const [preparingSpeech, setPreparingSpeech] = useState<string | null>(null);
+  const [speechError, setSpeechError] = useState<string | null>(null);
   const outlineRef = useRef(outline);
   outlineRef.current = outline;
 
@@ -133,6 +137,8 @@ export default function ReaderScreen({bookId, initialCardId, generationRevision 
   }, [bookId, dependencies.repositories, findFailure, initialCardId, readOffsets]);
 
   useEffect(() => { load().catch(() => undefined); }, [load]);
+
+  useEffect(() => () => { dependencies.tts.stop().catch(() => undefined); }, [dependencies.tts]);
 
   useEffect(() => {
     if (!drawerOpen) {return undefined;}
@@ -215,6 +221,18 @@ export default function ReaderScreen({bookId, initialCardId, generationRevision 
     setCards(current => current.map(item => item.id === card.id ? {...item, isFavorite} : item));
   }, [dependencies.repositories]);
 
+  const speak = useCallback(async (target: string, text: string) => {
+    setPreparingSpeech(target);
+    setSpeechError(null);
+    try {
+      await dependencies.tts.speak(text);
+    } catch (cause) {
+      setSpeechError(cause instanceof Error ? cause.message : '语音生成失败');
+    } finally {
+      setPreparingSpeech(current => current === target ? null : current);
+    }
+  }, [dependencies.tts]);
+
   if (!bookId) {return <View style={styles.center}><Text style={styles.empty}>请先从书库选择一本书</Text></View>;}
 
   return (
@@ -243,6 +261,8 @@ export default function ReaderScreen({bookId, initialCardId, generationRevision 
                   dependencies.repositories.setCardScrollOffset(card.id, offset).catch(() => undefined);
                 }}
                 onToggleFavorite={toggleFavorite}
+                onSpeak={(target, text) => { speak(target, text).catch(() => undefined); }}
+                preparingSpeech={preparingSpeech}
               />
             )}
             pagingEnabled
@@ -263,6 +283,7 @@ export default function ReaderScreen({bookId, initialCardId, generationRevision 
             <Pressable style={styles.retryGeneration} onPress={() => { retryFailed().catch(() => undefined); }}><Text style={styles.retryGenerationText}>重试生成</Text></Pressable>
           </View>
         ) : null}
+        {speechError ? <Pressable accessibilityLabel="关闭语音错误" style={styles.speechError} onPress={() => setSpeechError(null)}><Text style={styles.speechErrorText}>{speechError}</Text></Pressable> : null}
       </View>
       {drawerOpen ? (
         <View style={styles.drawerLayer}>
@@ -289,5 +310,6 @@ const styles = StyleSheet.create({
   failureOverlay: {position: 'absolute', top: 8, left: 12, right: 12, backgroundColor: '#FEECEB', borderWidth: 1, borderColor: '#F7B8B3', padding: 12},
   failureTitle: {fontSize: 14, fontWeight: '700', color: colors.danger}, failureMessage: {fontSize: 13, color: colors.text, marginTop: 4},
   retryGeneration: {alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', marginTop: 8, paddingHorizontal: 12, backgroundColor: colors.danger}, retryGenerationText: {color: '#FFFFFF', fontWeight: '700'},
+  speechError: {position: 'absolute', left: 12, right: 12, bottom: 12, minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, backgroundColor: '#FEECEB', borderWidth: 1, borderColor: '#F7B8B3'}, speechErrorText: {color: colors.danger, fontSize: 13},
   drawerLayer: {...StyleSheet.absoluteFillObject, zIndex: 20, flexDirection: 'row'}, scrim: {...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.32)'},
 });

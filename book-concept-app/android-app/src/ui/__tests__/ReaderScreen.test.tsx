@@ -26,12 +26,28 @@ function dependencies() {
       prefetch: jest.fn().mockResolvedValue(null),
       retry: jest.fn().mockResolvedValue(null),
     },
+    tts: {
+      preload: jest.fn(),
+      speak: jest.fn().mockResolvedValue(null),
+      stop: jest.fn().mockResolvedValue(undefined),
+    },
   };
 }
 
 function measure(view: ReturnType<typeof render>, height = 620) {
   fireEvent(view.getByTestId('reader-viewport'), 'layout', {nativeEvent: {layout: {height}}});
 }
+
+it('routes the fable button through the configured TTS service', async () => {
+  const deps = dependencies();
+  const view = render(<ReaderScreen bookId={book.id} dependencies={deps} />);
+  await screen.findByText(book.title);
+  measure(view);
+
+  fireEvent.press(await screen.findByLabelText(`朗读寓言 ${cards[2].title}`));
+
+  await waitFor(() => expect(deps.tts.speak).toHaveBeenCalledWith(cards[2].fable));
+});
 
 it('selects the earliest failed target before the first queued node after the active section', () => {
   const failed = {...outline[0], id: 'failed-early', status: 'failed' as const, startOffset: 5};

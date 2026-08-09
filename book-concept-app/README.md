@@ -103,3 +103,15 @@ Kokoro 服务状态页 `http://127.0.0.1:9977/health` 中如果看到 `resolved_
 - `GET /api/settings/tts` 查看 Kokoro/TTS 配置
 - `PUT /api/settings/tts` 保存 Kokoro/TTS 配置
 - `POST /api/tts/speech` 生成朗读音频
+
+## Android APK
+
+独立 Android 客户端位于 `android-app/`，不会修改或替代现有网页版。它在手机本地保存数据库，直接调用 DeepSeek 云 API，并内置中文离线 TTS 模型。
+
+本地测试与构建：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_android_apk.ps1 -Offline
+```
+
+详细环境、安装和签名说明见 `android-app/README.md`。

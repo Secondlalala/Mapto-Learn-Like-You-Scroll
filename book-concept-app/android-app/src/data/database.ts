@@ -141,19 +141,28 @@ const migrationV3 = [
     prerequisites = key_points`,
 ];
 
+const migrationV4 = [
+  'ALTER TABLE cards ADD COLUMN card_position INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE cards ADD COLUMN scroll_offset REAL NOT NULL DEFAULT 0',
+];
+
 export async function migrateDatabase(database: Database): Promise<void> {
   await database.execute('PRAGMA foreign_keys = ON');
   const version = await database.execute('PRAGMA user_version');
   const userVersion = Number(version.rows[0]?.user_version ?? 0);
-  if (userVersion < 3) {
+  if (userVersion < 4) {
     const migration = userVersion < 1
-      ? [...migrationV1, ...migrationV2, ...migrationV3]
-      : [...(userVersion < 2 ? migrationV2 : []), ...migrationV3];
+      ? [...migrationV1, ...migrationV2, ...migrationV3, ...migrationV4]
+      : [
+        ...(userVersion < 2 ? migrationV2 : []),
+        ...(userVersion < 3 ? migrationV3 : []),
+        ...migrationV4,
+      ];
     await database.transaction(async transaction => {
       for (const statement of migration) {
         await transaction.execute(statement);
       }
-      await transaction.execute('PRAGMA user_version = 3');
+      await transaction.execute('PRAGMA user_version = 4');
     });
   }
 }

@@ -57,14 +57,14 @@ jobs:
       - name: Run unit tests
         run: npm test -- --runInBand --testTimeout=15000
 
-      - name: Assemble ARM64 debug APK
+      - name: Assemble standalone ARM64 release APK
         shell: pwsh
-        run: .\android\gradlew.bat -p .\android assembleDebug --no-daemon
+        run: .\android\gradlew.bat -p .\android assembleRelease --no-daemon
 
       - name: Verify APK
         shell: pwsh
         run: |
-          $apk = "android\app\build\outputs\apk\debug\app-debug.apk"
+          $apk = "android\app\build\outputs\apk\release\app-release.apk"
           if (-not (Test-Path $apk)) { throw "APK not found: $apk" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk))
@@ -76,15 +76,22 @@ jobs:
           } finally {
             $archive.Dispose()
           }
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk))
+          try {
+            $hasBundle = $null -ne ($archive.Entries | Where-Object { $_.FullName -eq "assets/index.android.bundle" } | Select-Object -First 1)
+          } finally {
+            $archive.Dispose()
+          }
           if ($abis.Count -ne 1 -or $abis[0] -ne "arm64-v8a") {
             throw "Expected only arm64-v8a native libraries, found: $($abis -join ', ')"
           }
+          if (-not $hasBundle) { throw "Standalone JavaScript bundle is missing from APK" }
           Get-FileHash $apk -Algorithm SHA256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MapToLearn-debug-arm64
-          path: s/book-concept-app/android-app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: MapToLearn-release-arm64
+          path: s/book-concept-app/android-app/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14

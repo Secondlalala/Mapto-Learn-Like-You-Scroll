@@ -127,13 +127,13 @@ function toTtsCacheEntry(row: Row): TtsCacheEntry {
   };
 }
 
-async function insertCard(database: Database, card: ConceptCard): Promise<void> {
+async function insertCard(database: Database, card: ConceptCard, cardPosition = 0): Promise<void> {
   await database.execute(
     `INSERT INTO cards (
       id, book_id, section_id, title, summary, body, key_points, source_excerpt, formulae,
       card_type, chapter, source_text, one_sentence, simple_explanation, fable, formula,
-      formula_explanation, prerequisites, related_concepts, questions, is_favorite, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      formula_explanation, prerequisites, related_concepts, questions, is_favorite, card_position, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       card.id,
       card.bookId,
@@ -156,6 +156,7 @@ async function insertCard(database: Database, card: ConceptCard): Promise<void> 
       toJson(card.relatedConcepts),
       toJson(card.questions),
       card.isFavorite ? 1 : 0,
+      cardPosition,
       card.createdAt,
     ],
   );
@@ -191,6 +192,7 @@ export interface Repositories {
   getOutlineNode(sectionId: string): Promise<OutlineNode | null>;
   insertCard(card: ConceptCard): Promise<void>;
   listCards(bookId: string): Promise<ConceptCard[]>;
+  listFavoriteCards(): Promise<ConceptCard[]>;
   getCard(cardId: string): Promise<ConceptCard | null>;
   toggleFavorite(cardId: string): Promise<boolean>;
   listMessages(cardId: string): Promise<ChatMessage[]>;
@@ -205,6 +207,8 @@ export interface Repositories {
   saveCardsAndAdvance(sectionId: string, cards: ConceptCard[], nextChunkIndex: number, updatedAt?: string): Promise<void>;
   setLastReadCard(bookId: string, cardId: string): Promise<void>;
   getLastReadCard(bookId: string): Promise<string | null>;
+  setCardScrollOffset(cardId: string, offset: number): Promise<void>;
+  getCardScrollOffset(cardId: string): Promise<number>;
   upsertTtsCache(entry: TtsCacheEntry): Promise<void>;
   getTtsCache(cacheKey: string): Promise<TtsCacheEntry | null>;
 }
@@ -281,7 +285,26 @@ export function createRepositories(database: Database): Repositories {
     insertCard: card => insertCard(database, card),
 
     async listCards(bookId) {
-      const result = await database.execute('SELECT * FROM cards WHERE book_id = ? ORDER BY created_at ASC', [bookId]);
+      const result = await database.execute(
+        `SELECT cards.* FROM cards
+         JOIN outline_nodes ON outline_nodes.id = cards.section_id
+         WHERE cards.book_id = ?
+         ORDER BY
+           outline_nodes.start_offset ASC,
+           outline_nodes.end_offset ASC,
+           outline_nodes.chunk_index ASC,
+           CASE cards.card_type WHEN 'section_overview' THEN 0 ELSE 1 END ASC,
+           cards.card_position ASC,
+           cards.id ASC`,
+        [bookId],
+      );
+      return result.rows.map(toCard);
+    },
+
+    async listFavoriteCards() {
+      const result = await database.execute(
+        'SELECT * FROM cards WHERE is_favorite = 1 ORDER BY created_at DESC',
+      );
       return result.rows.map(toCard);
     },
 
@@ -390,8 +413,8 @@ export function createRepositories(database: Database): Repositories {
       }
       const updatedAt = requestedUpdatedAt ?? new Date().toISOString();
       await database.transaction(async transaction => {
-        for (const card of cards) {
-          await insertCard(transaction, card);
+        for (const [position, card] of cards.entries()) {
+          await insertCard(transaction, card, position);
         }
         await transaction.execute(
           `INSERT INTO generation_state (section_id, status, next_chunk_index, error_message, error_code, updated_at)
@@ -418,6 +441,18 @@ export function createRepositories(database: Database): Repositories {
     async getLastReadCard(bookId) {
       const result = await database.execute('SELECT last_read_card_id FROM books WHERE id = ?', [bookId]);
       return asNullableString(result.rows[0]?.last_read_card_id);
+    },
+
+    async setCardScrollOffset(cardId, offset) {
+      if (!Number.isFinite(offset) || offset < 0) {
+        throw new Error('Card scroll offset must be a non-negative number');
+      }
+      await database.execute('UPDATE cards SET scroll_offset = ? WHERE id = ?', [offset, cardId]);
+    },
+
+    async getCardScrollOffset(cardId) {
+      const result = await database.execute('SELECT scroll_offset FROM cards WHERE id = ?', [cardId]);
+      return Math.max(0, Number(result.rows[0]?.scroll_offset ?? 0));
     },
 
     async upsertTtsCache(entry) {

@@ -68,7 +68,7 @@ class MemoryDatabase implements Database {
     if (normalized === 'PRAGMA USER_VERSION') {
       return {rows: [{user_version: this.userVersion}], rowsAffected: 0};
     }
-    if (/^PRAGMA USER_VERSION = [123]$/.test(normalized)) {
+    if (/^PRAGMA USER_VERSION = [1234]$/.test(normalized)) {
       this.userVersion = Number(normalized.at(-1));
       return {rows: [], rowsAffected: 0};
     }
@@ -148,7 +148,7 @@ class MemoryDatabase implements Database {
       const [
         id, bookId, sectionId, title, summary, body, keyPoints, sourceExcerpt, formulae,
         cardType, chapter, sourceText, oneSentence, simpleExplanation, fable, formula,
-        formulaExplanation, prerequisites, relatedConcepts, questions, isFavorite, createdAt,
+        formulaExplanation, prerequisites, relatedConcepts, questions, isFavorite, cardPosition, createdAt,
       ] = params;
       const section = this.state.outlineNodes.get(sectionId as string);
       if (!this.state.books.has(bookId as string) || section?.book_id !== bookId) {
@@ -176,13 +176,35 @@ class MemoryDatabase implements Database {
         related_concepts: relatedConcepts,
         questions,
         is_favorite: isFavorite,
+        card_position: cardPosition,
+        scroll_offset: 0,
         created_at: createdAt,
       });
       return {rows: [], rowsAffected: 1};
     }
+    if (normalized.startsWith('SELECT CARDS.* FROM CARDS JOIN OUTLINE_NODES')) {
+      const rows = [...this.state.cards.values()].filter(card => card.book_id === params[0]);
+      rows.sort((left, right) => {
+        const leftSection = this.state.outlineNodes.get(left.section_id as string)!;
+        const rightSection = this.state.outlineNodes.get(right.section_id as string)!;
+        return Number(leftSection.start_offset) - Number(rightSection.start_offset) ||
+          Number(leftSection.end_offset) - Number(rightSection.end_offset) ||
+          Number(leftSection.chunk_index) - Number(rightSection.chunk_index) ||
+          (left.card_type === 'section_overview' ? 0 : 1) - (right.card_type === 'section_overview' ? 0 : 1) ||
+          Number(left.card_position ?? 0) - Number(right.card_position ?? 0) ||
+          String(left.id).localeCompare(String(right.id));
+      });
+      return {rows, rowsAffected: 0};
+    }
     if (normalized.startsWith('SELECT * FROM CARDS WHERE BOOK_ID')) {
       return {
         rows: [...this.state.cards.values()].filter(card => card.book_id === params[0]),
+        rowsAffected: 0,
+      };
+    }
+    if (normalized.startsWith('SELECT * FROM CARDS WHERE IS_FAVORITE')) {
+      return {
+        rows: [...this.state.cards.values()].filter(card => card.is_favorite === 1),
         rowsAffected: 0,
       };
     }
@@ -200,6 +222,17 @@ class MemoryDatabase implements Database {
         card.is_favorite = params[0];
       }
       return {rows: [], rowsAffected: card ? 1 : 0};
+    }
+    if (normalized.startsWith('UPDATE CARDS SET SCROLL_OFFSET')) {
+      const storedCard = this.state.cards.get(params[1] as string);
+      if (storedCard) {
+        storedCard.scroll_offset = params[0];
+      }
+      return {rows: [], rowsAffected: storedCard ? 1 : 0};
+    }
+    if (normalized.startsWith('SELECT SCROLL_OFFSET FROM CARDS')) {
+      const storedCard = this.state.cards.get(params[0] as string);
+      return {rows: storedCard ? [{scroll_offset: storedCard.scroll_offset}] : [], rowsAffected: 0};
     }
     if (normalized.startsWith('UPDATE CARDS SET SOURCE_TEXT')) {
       for (const existingCard of this.state.cards.values()) {
@@ -425,13 +458,13 @@ async function createReadyRepositories(database = new MemoryDatabase()) {
 }
 
 describe('SQLite repositories', () => {
-  it('applies version 3 schema with foreign keys enabled', async () => {
+  it('applies the complete version 4 schema with foreign keys enabled', async () => {
     const database = new MemoryDatabase();
 
     await migrateDatabase(database);
 
     expect(database.foreignKeysEnabled).toBe(true);
-    expect(database.userVersion).toBe(3);
+    expect(database.userVersion).toBe(4);
     const statements = database.statements.join('\n');
     for (const table of [
       'books',
@@ -451,9 +484,11 @@ describe('SQLite repositories', () => {
       'ALTER TABLE outline_nodes ADD COLUMN end_offset INTEGER NOT NULL DEFAULT 0',
       expect.stringContaining('ALTER TABLE cards ADD COLUMN card_type'),
       'ALTER TABLE generation_state ADD COLUMN error_code TEXT',
-      'PRAGMA user_version = 3',
+      'ALTER TABLE cards ADD COLUMN card_position INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE cards ADD COLUMN scroll_offset REAL NOT NULL DEFAULT 0',
+      'PRAGMA user_version = 4',
     ]));
-    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 3');
+    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 4');
   });
 
   it('upgrades an existing version 1 database without resetting it', async () => {
@@ -462,14 +497,15 @@ describe('SQLite repositories', () => {
 
     await migrateDatabase(database);
 
-    expect(database.userVersion).toBe(3);
+    expect(database.userVersion).toBe(4);
     expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN start_offset');
     expect(database.statements.join('\n')).toContain('ALTER TABLE outline_nodes ADD COLUMN end_offset');
     expect(database.transactionBatches[0]).toEqual(expect.arrayContaining([
       'ALTER TABLE outline_nodes ADD COLUMN start_offset INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE outline_nodes ADD COLUMN end_offset INTEGER NOT NULL DEFAULT 0',
       expect.stringContaining('ALTER TABLE cards ADD COLUMN card_type'),
-      'PRAGMA user_version = 3',
+      expect.stringContaining('ALTER TABLE cards ADD COLUMN card_position'),
+      'PRAGMA user_version = 4',
     ]));
   });
 
@@ -504,9 +540,9 @@ describe('SQLite repositories', () => {
 
     await migrateDatabase(database);
 
-    expect(database.userVersion).toBe(3);
+    expect(database.userVersion).toBe(4);
     expect(database.transactionBatches).toHaveLength(1);
-    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 3');
+    expect(database.transactionBatches[0].at(-1)).toBe('PRAGMA user_version = 4');
     expect(database.transactionBatches[0]).toEqual(expect.arrayContaining([
       expect.stringContaining('ALTER TABLE cards ADD COLUMN card_type'),
       expect.stringContaining('ALTER TABLE cards ADD COLUMN questions'),
@@ -546,6 +582,31 @@ describe('SQLite repositories', () => {
     expect(database.transactionBatches).toEqual([]);
   });
 
+  it('atomically upgrades v3 databases with card order and inner scroll state', async () => {
+    const database = new MemoryDatabase();
+    database.userVersion = 3;
+
+    await migrateDatabase(database);
+
+    expect(database.userVersion).toBe(4);
+    expect(database.transactionBatches).toEqual([[
+      'ALTER TABLE cards ADD COLUMN card_position INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE cards ADD COLUMN scroll_offset REAL NOT NULL DEFAULT 0',
+      'PRAGMA user_version = 4',
+    ]]);
+  });
+
+  it('rolls back all v4 columns when migration fails', async () => {
+    const database = new MemoryDatabase();
+    database.userVersion = 3;
+    database.failMigrationStatement = 'ALTER TABLE CARDS ADD COLUMN SCROLL_OFFSET REAL NOT NULL DEFAULT 0';
+
+    await expect(migrateDatabase(database)).rejects.toThrow('Migration failed');
+
+    expect(database.userVersion).toBe(3);
+    expect(database.transactionBatches).toEqual([]);
+  });
+
   it('retries database initialization after a failed open', async () => {
     const rows = [{user_version: 0}];
     const nativeDatabase = {
@@ -577,6 +638,27 @@ describe('SQLite repositories', () => {
 
     await expect(repositories.getBook(book.id)).resolves.toMatchObject({tags: ['math', 'notes']});
     await expect(repositories.listCards(book.id)).resolves.toEqual([card]);
+  });
+
+  it('lists cards by section source order, overview first, then generated position', async () => {
+    const {database, repositories} = await createReadyRepositories();
+    await database.execute(
+      `INSERT INTO outline_nodes (
+        id, book_id, parent_id, title, level, body, child_ids, status, chunk_index, start_offset, end_offset
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['section-later', book.id, null, 'Later', 1, 'Body', '[]', 'queued', 0, 100, 105],
+    );
+    const conceptOne = {...card, id: 'z-concept', cardType: 'concept' as const};
+    const conceptTwo = {...card, id: 'a-concept', cardType: 'concept' as const};
+    const overview = {...card, id: 'z-overview', cardType: 'section_overview' as const};
+    const later = {...card, id: 'later', sectionId: 'section-later'};
+
+    await repositories.saveCardsAndAdvance(card.sectionId, [overview, conceptOne, conceptTwo], 1);
+    await repositories.saveCardsAndAdvance('section-later', [later], 1);
+
+    await expect(repositories.listCards(book.id)).resolves.toEqual([
+      overview, conceptOne, conceptTwo, later,
+    ]);
   });
 
   it('rejects outline inserts whose column and parameter counts differ', async () => {
@@ -624,6 +706,15 @@ describe('SQLite repositories', () => {
 
     await expect(repositories.toggleFavorite(card.id)).resolves.toBe(true);
     await expect(repositories.listCards(book.id)).resolves.toMatchObject([{isFavorite: true}]);
+  });
+
+  it('lists favorite cards across the local library', async () => {
+    const {repositories} = await createReadyRepositories();
+    await repositories.insertCard({...card, isFavorite: true});
+
+    await expect(repositories.listFavoriteCards()).resolves.toEqual([
+      {...card, isFavorite: true},
+    ]);
   });
 
   it('looks up generation records and synchronizes section status without changing its cursor', async () => {
@@ -704,6 +795,15 @@ describe('SQLite repositories', () => {
     await repositories.setLastReadCard(book.id, card.id);
 
     await expect(repositories.getLastReadCard(book.id)).resolves.toBe(card.id);
+  });
+
+  it('persists and restores each card inner scroll offset', async () => {
+    const {repositories} = await createReadyRepositories();
+    await repositories.insertCard(card);
+
+    await repositories.setCardScrollOffset(card.id, 132.5);
+
+    await expect(repositories.getCardScrollOffset(card.id)).resolves.toBe(132.5);
   });
 
   it('rolls back inserted cards when generation cursor advancement fails', async () => {

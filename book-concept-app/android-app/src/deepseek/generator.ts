@@ -157,16 +157,34 @@ export function createDeepSeekGenerator(dependencies: DeepSeekGeneratorDependenc
     }
   }
 
-  async function generateNextSectionImpl(bookId: string): Promise<GenerationResult | null> {
-    const sections = await dependencies.repositories.listOutlineNodes(bookId);
-    const next = sections
-      .filter(section => section.status === 'queued')
-      .sort((left, right) =>
-        left.startOffset - right.startOffset ||
-        left.endOffset - right.endOffset ||
-        left.chunkIndex - right.chunkIndex,
-      )[0];
-    return next ? generateSectionImpl(next.id) : null;
+  async function generateNextSectionImpl(bookId: string, afterSectionId?: string): Promise<GenerationResult | null> {
+    const sections = (await dependencies.repositories.listOutlineNodes(bookId)).sort((left, right) =>
+      left.startOffset - right.startOffset ||
+      left.endOffset - right.endOffset ||
+      left.chunkIndex - right.chunkIndex ||
+      left.id.localeCompare(right.id),
+    );
+    if (sections.some(section => section.status === 'generating')) {
+      return null;
+    }
+
+    const failed = sections.find(section => section.status === 'failed');
+    const activeIndex = afterSectionId ? sections.findIndex(section => section.id === afterSectionId) : -1;
+    const queued = activeIndex >= 0
+      ? sections.slice(activeIndex + 1).find(section => section.status === 'queued')
+      : sections.find(section => section.status === 'queued');
+    const next = failed ?? queued;
+    if (!next) {
+      return null;
+    }
+    try {
+      return await generateSectionImpl(next.id);
+    } catch (error) {
+      if (error instanceof DeepSeekSectionNotClaimableError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async function askCardImpl(cardId: string, question: string): Promise<ChatMessage> {
@@ -228,8 +246,8 @@ export async function generateSection(sectionId: string): Promise<GenerationResu
   return (await defaultGenerator()).generateSection(sectionId);
 }
 
-export async function generateNextSection(bookId: string): Promise<GenerationResult | null> {
-  return (await defaultGenerator()).generateNextSection(bookId);
+export async function generateNextSection(bookId: string, afterSectionId?: string): Promise<GenerationResult | null> {
+  return (await defaultGenerator()).generateNextSection(bookId, afterSectionId);
 }
 
 export async function askCard(cardId: string, question: string): Promise<ChatMessage> {

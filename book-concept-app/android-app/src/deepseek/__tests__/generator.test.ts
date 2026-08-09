@@ -27,7 +27,7 @@ type GeneratorModule = {
     now: () => string;
   }) => {
     generateSection: (sectionId: string) => Promise<{sectionId: string; cards: ConceptCard[]}>;
-    generateNextSection: (bookId: string) => Promise<{sectionId: string; cards: ConceptCard[]} | null>;
+    generateNextSection: (bookId: string, afterSectionId?: string) => Promise<{sectionId: string; cards: ConceptCard[]} | null>;
     askCard: (cardId: string, question: string) => Promise<ChatMessage>;
   };
 };
@@ -285,15 +285,36 @@ describe('DeepSeek generation orchestration', () => {
     ]);
   });
 
-  it('selects the earliest queued section by source offset and returns null when none remain', async () => {
+  it('prioritizes the earliest failed section before queued work', async () => {
     const nodes = [node('later', 200), node('failed-earlier', 5, 'failed'), node('earliest', 20)];
     const {repositories, client, generator} = createHarness(nodes);
     client.complete.mockResolvedValue(JSON.stringify([generatedCard('section_overview', 'Overview')]));
 
-    await expect(generator.generateNextSection('book-1')).resolves.toMatchObject({sectionId: 'earliest'});
-    expect(repositories.saveCalls[0].sectionId).toBe('earliest');
+    await expect(generator.generateNextSection('book-1')).resolves.toMatchObject({sectionId: 'failed-earlier'});
+    expect(repositories.saveCalls[0].sectionId).toBe('failed-earlier');
+  });
 
-    nodes.find(item => item.id === 'later')!.status = 'completed';
+  it('selects the next queued section after the active reading section', async () => {
+    const nodes = [node('behind', 5), node('active', 20, 'completed'), node('next', 40), node('later', 80)];
+    const {repositories, client, generator} = createHarness(nodes);
+    client.complete.mockResolvedValue(JSON.stringify([generatedCard('section_overview', 'Overview')]));
+
+    await expect(generator.generateNextSection('book-1', 'active')).resolves.toMatchObject({sectionId: 'next'});
+    expect(repositories.saveCalls[0].sectionId).toBe('next');
+  });
+
+  it('cleanly no-ops while any section in the book is already generating', async () => {
+    const {client, generator} = createHarness([node('active', 10, 'completed'), node('busy', 20, 'generating'), node('next', 30)]);
+    client.complete.mockResolvedValue(JSON.stringify([generatedCard('section_overview', 'Overview')]));
+
+    await expect(generator.generateNextSection('book-1', 'active')).resolves.toBeNull();
+    expect(client.complete).not.toHaveBeenCalled();
+  });
+
+  it('returns null when no queued or failed sections remain', async () => {
+    const nodes = [node('done', 10, 'completed')];
+    const {generator} = createHarness(nodes);
+
     await expect(generator.generateNextSection('book-1')).resolves.toBeNull();
   });
 

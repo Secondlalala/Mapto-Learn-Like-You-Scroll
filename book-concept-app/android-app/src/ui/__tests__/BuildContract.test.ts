@@ -12,10 +12,27 @@ it('registers the React component from src instead of resolving app.json', () =>
 });
 
 it('builds and uploads a standalone ARM64 release APK', () => {
-  const workflow = fs.readFileSync(
+  const workflowCandidates = [
     path.join(repositoryRoot, '.github/workflows/android-apk.yml'),
-    'utf8',
+    process.env.GITHUB_WORKSPACE
+      ? path.join(
+          process.env.GITHUB_WORKSPACE,
+          's/.github/workflows/android-apk.yml',
+        )
+      : '',
+    process.env.GITHUB_WORKSPACE
+      ? path.join(
+          process.env.GITHUB_WORKSPACE,
+          '.github/workflows/android-apk.yml',
+        )
+      : '',
+  ];
+  const workflowPath = workflowCandidates.find(candidate =>
+    fs.existsSync(candidate),
   );
+
+  expect(workflowPath).toBeTruthy();
+  const workflow = fs.readFileSync(workflowPath!, 'utf8');
 
   expect(workflow).toContain('assembleRelease');
   expect(workflow).toContain('working-directory: D:\\m');

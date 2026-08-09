@@ -19,13 +19,27 @@ jobs:
 
     defaults:
       run:
-        working-directory: s/book-concept-app/android-app
+        working-directory: D:\m
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
           path: s
+
+      - name: Stage Android project at a short path
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $source = Join-Path $env:GITHUB_WORKSPACE "s\book-concept-app\android-app"
+          $destination = "D:\m"
+          if (Test-Path $destination) { throw "Build staging path already exists: $destination" }
+          New-Item -ItemType Directory -Path $destination | Out-Null
+          robocopy $source $destination /E /R:2 /W:2 /XD node_modules .gradle build .tools .gradle-user-home /XF *.log /NFL /NDL /NJH /NJS /NP
+          $robocopyExit = $LASTEXITCODE
+          if ($robocopyExit -gt 7) { throw "robocopy failed with exit code $robocopyExit" }
+          if (-not (Test-Path "$destination\android\gradlew.bat")) { throw "Staged Android project is incomplete" }
+          exit 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -87,11 +101,14 @@ jobs:
           }
           if (-not $hasBundle) { throw "Standalone JavaScript bundle is missing from APK" }
           Get-FileHash $apk -Algorithm SHA256
+          $artifactDirectory = Join-Path $env:GITHUB_WORKSPACE "apk-output"
+          New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
+          Copy-Item $apk (Join-Path $artifactDirectory "MapToLearn-release-arm64.apk")
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: MapToLearn-release-arm64
-          path: s/book-concept-app/android-app/android/app/build/outputs/apk/release/app-release.apk
+          path: apk-output/MapToLearn-release-arm64.apk
           if-no-files-found: error
           retention-days: 14

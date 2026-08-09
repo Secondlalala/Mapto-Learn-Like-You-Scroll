@@ -18,8 +18,11 @@ it('builds and uploads a standalone ARM64 release APK', () => {
   );
 
   expect(workflow).toContain('assembleRelease');
+  expect(workflow).toContain('working-directory: D:\\m');
+  expect(workflow).toContain('robocopy');
   expect(workflow).toContain('outputs\\apk\\release\\app-release.apk');
   expect(workflow).toContain('MapToLearn-release-arm64');
+  expect(workflow).toContain('apk-output/MapToLearn-release-arm64.apk');
   expect(workflow).toContain('assets/index.android.bundle');
   expect(workflow).not.toContain('assembleDebug');
 });

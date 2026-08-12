@@ -26,6 +26,15 @@ export default function App() {
     refreshBooks();
   }, []);
 
+  const returnToParent = () => {
+    // 返回按钮按当前页面层级移动，阅读页先回到所属书籍，而不是直接跳回书库。
+    if (route.name === "reader") {
+      setRoute({ name: "book", bookId: route.bookId });
+      return;
+    }
+    setRoute({ name: "upload" });
+  };
+
   return (
     <main className="min-h-screen">
       <header className="fixed left-0 right-0 top-0 z-20 border-b border-stone-200 bg-[#f7f5ef]/95 backdrop-blur">
@@ -41,7 +50,8 @@ export default function App() {
             {route.name !== "upload" && (
               <button
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-300 px-3 text-sm hover:bg-white"
-                onClick={() => setRoute({ name: "upload" })}
+                onClick={returnToParent}
+                title={route.name === "reader" ? "返回当前书籍" : "返回书库"}
               >
                 <ArrowLeft size={16} />
                 返回

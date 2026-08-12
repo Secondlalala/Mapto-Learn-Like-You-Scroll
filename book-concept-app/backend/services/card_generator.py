@@ -94,6 +94,11 @@ def build_outline(book: Book, cards: list[ConceptCard] | None = None) -> list[di
     ]
 
 
+def section_count_for_book(book: Book) -> int:
+    # 任务创建时仅统计已经切出的稳定小节数量，不额外调用模型，避免进度总数随页面刷新波动。
+    return len(_load_sections(book))
+
+
 def card_to_dict(card: ConceptCard) -> dict:
     # ORM 内部以 JSON 字符串保存列表；API 输出前统一转为数组并容忍历史坏数据。
     return {

@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Book, ConceptCard
 from schemas import BookOut, GenerateCardsOut, OutlineItemOut
-from services.card_generator import build_outline, generate_cards_for_book
+from services.card_generator import build_outline
 from services.deepseek_client import DeepSeekNotConfiguredError
+from services.generation_manager import generation_manager
 
 
 router = APIRouter(prefix="/api/books", tags=["books"])
@@ -54,7 +55,7 @@ async def generate_cards(
         raise HTTPException(status_code=404, detail="书籍不存在。")
     # 单次请求只处理一个小节，既缩短 DeepSeek 等待时间，也让断点游标及时落库。
     try:
-        generated, done, cursor, total_sections = await generate_cards_for_book(db, book, force=force)
+        generated, done, cursor, total_sections = await generation_manager.generate_one_step(db, book, force=force)
     # 配置问题、上游服务问题和未知程序错误使用不同状态码，前端可以给出准确提示。
     except DeepSeekNotConfiguredError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

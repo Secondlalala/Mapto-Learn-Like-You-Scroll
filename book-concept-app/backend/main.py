@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import get_settings
 from database import init_db
 from routers import books, cards, chat, settings as settings_router, tts, upload
+from services.generation_manager import generation_manager
 from services.kokoro_manager import start_kokoro_if_enabled
 
 
@@ -32,6 +33,8 @@ app.add_middleware(
 def on_startup():
     # 后端启动时先保证数据库结构可用，再按当前设置按需拉起本地语音服务。
     init_db()
+    # 上次意外停止的任务不会自动重放未知的上游请求，保留已生成内容并等待用户继续。
+    generation_manager.recover_interrupted_jobs()
     start_kokoro_if_enabled()
 
 

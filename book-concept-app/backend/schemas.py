@@ -22,6 +22,14 @@ class UploadOut(BaseModel):
     message: str
 
 
+class DatabaseImportOut(BaseModel):
+    imported_book_ids: list[int]
+    imported_books: int
+    imported_cards: int
+    imported_messages: int
+    message: str
+
+
 class GenerateCardsOut(BaseModel):
     book_id: int
     generated: int

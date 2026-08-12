@@ -132,6 +132,7 @@ def import_database_file(db: Session, source_path: Path) -> ImportResult:
 
 
 def _open_readonly(source_path: Path) -> sqlite3.Connection:
+    source: sqlite3.Connection | None = None
     try:
         source = sqlite3.connect(f"file:{source_path.resolve().as_posix()}?mode=ro", uri=True)
         source.row_factory = sqlite3.Row
@@ -139,6 +140,8 @@ def _open_readonly(source_path: Path) -> sqlite3.Connection:
         source.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
         return source
     except (OSError, sqlite3.DatabaseError) as exc:
+        if source is not None:
+            source.close()
         raise ImportValidationError("文件不是有效的 SQLite 数据库。") from exc
 
 

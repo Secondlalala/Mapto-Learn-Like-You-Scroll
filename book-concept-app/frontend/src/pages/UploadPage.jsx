@@ -8,10 +8,12 @@ export default function UploadPage({ books, onUploaded, onOpenBook }) {
   const [error, setError] = useState("");
 
   const upload = async (file) => {
+    // busy 同时禁止重复选择文件；无论成功失败都在 finally 中恢复可操作状态。
     setBusy(true);
     setError("");
     try {
       const data = await api.uploadBook(file);
+      // 上传成功后由父组件刷新书库并跳转书籍详情，不在本页复制导航状态。
       onUploaded(data.book_id);
     } catch (err) {
       setError(err.message);
@@ -57,4 +59,3 @@ export default function UploadPage({ books, onUploaded, onOpenBook }) {
     </section>
   );
 }
-

@@ -6,6 +6,16 @@ __pycache__/
 .venv/
 uploads/
 runtime_settings.json
+tts_models/
+tts_cache/
 node_modules/
 dist/
 .DS_Store
+
+# 软著材料仅保存最终 Web 版；渲染质检图和旧的混合版本可由脚本重新生成。
+docs/software-copyright/**/_qa/
+docs/software-copyright/MapToLearn_V1.0/
+docs/software-copyright/MapToLearn_AI书籍概念化学习软件_V1.0_软著申请材料包.zip
+
+# 桌面控制器由 C# 源码和安装脚本编译，不提交本机生成的可执行文件。
+scripts/*.exe

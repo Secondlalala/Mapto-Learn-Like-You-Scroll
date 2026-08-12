@@ -1,9 +1,10 @@
 import { KeyRound, Loader2, Save, Volume2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
 const SPEED_STORAGE_KEY = "book-concept-app.tts.speed";
 
+// 音色使用受支持的固定选项，避免手工输入不存在的 voice 导致模型请求失败。
 const CHINESE_VOICES = [
   { value: "zf_xiaoxiao", label: "zf_xiaoxiao 女声，普通话" },
   { value: "zf_001", label: "zf_001 女声，普通话" },
@@ -19,7 +20,17 @@ const ENGLISH_VOICES = [
   { value: "bm_george", label: "bm_george 男声，英式英语" },
 ];
 
+const SHERPA_CHINESE_VOICES = [
+  { value: "zh_CN-xiao_ya-medium", label: "xiao_ya 女声，普通话" },
+  { value: "zh_CN-chaowen-medium", label: "chaowen 男声，普通话" },
+];
+
+const SHERPA_ENGLISH_VOICES = [
+  { value: "en_US-lessac-medium", label: "lessac 女声，美式英语" },
+];
+
 export default function DeepSeekSettings({ open, onClose }) {
+  // API Key 输入框只保存本次新值；后端返回的 masked 仅用于提示已有配置。
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("https://api.deepseek.com");
   const [model, setModel] = useState("deepseek-chat");
@@ -34,7 +45,9 @@ export default function DeepSeekSettings({ open, onClose }) {
   const [ttsModel, setTtsModel] = useState("kokoro-82m");
   const [ttsLangCode, setTtsLangCode] = useState("z");
   const [ttsDevice, setTtsDevice] = useState("auto");
-  const [ttsSpeed, setTtsSpeed] = useState(readStoredSpeed);
+  // 语速先从 localStorage 恢复，使设置窗打开前的朗读也使用上次选择。
+  const [ttsSpeed, setTtsSpeed] = useState(() => readStoredSpeed(0.8));
+  const speedSaveTimer = useRef(null);
 
   const [busy, setBusy] = useState(false);
   const [preloading, setPreloading] = useState(false);
@@ -42,6 +55,7 @@ export default function DeepSeekSettings({ open, onClose }) {
 
   useEffect(() => {
     if (!open) return;
+    // 设置窗打开时并行读取两组配置，减少串行请求造成的界面等待。
     Promise.all([api.getDeepSeekSettings(), api.getTTSSettings()]).then(([deepseek, tts]) => {
       setApiBase(deepseek.api_base);
       setModel(deepseek.model);
@@ -55,7 +69,8 @@ export default function DeepSeekSettings({ open, onClose }) {
       setTtsModel(tts.model || "kokoro-82m");
       setTtsLangCode(tts.lang_code || "z");
       setTtsDevice(tts.device || "auto");
-      const speed = clampSpeed(tts.speed ?? readStoredSpeed());
+      // 本地值优先用于即时体验，服务端值作为首次使用或清理缓存后的回退。
+      const speed = readStoredSpeed(tts.speed ?? 0.8);
       setTtsSpeed(speed);
       storeSpeed(speed);
     });
@@ -64,12 +79,37 @@ export default function DeepSeekSettings({ open, onClose }) {
   if (!open) return null;
 
   const updateSpeed = (value) => {
+    // 拖动滑块时立即更新本地值，并用防抖减少连续 PUT 请求。
     const speed = clampSpeed(value);
     setTtsSpeed(speed);
     storeSpeed(speed);
+    window.clearTimeout(speedSaveTimer.current);
+    speedSaveTimer.current = window.setTimeout(() => {
+      api.updateTTSSettings({ speed }).catch((err) => setMessage(err.message));
+    }, 250);
+  };
+
+  const selectTtsStyle = (style) => {
+    // 切换引擎时同步切换其有效默认模型、语言代码、音色和设备组合。
+    // 这些默认值只更新表单，用户点击保存或预加载后才写入后端。
+    setTtsStyle(style);
+    if (style === "sherpa") {
+      setTtsVoice("zh_CN-xiao_ya-medium");
+      setTtsEnglishVoice("en_US-lessac-medium");
+      setTtsModel("sherpa-vits-bilingual");
+      setTtsLangCode("auto");
+      setTtsDevice("cpu");
+    } else if (style === "kokoro") {
+      setTtsVoice("zf_xiaoxiao");
+      setTtsEnglishVoice("af_heart");
+      setTtsModel("kokoro-82m");
+      setTtsLangCode("z");
+      setTtsDevice("auto");
+    }
   };
 
   const ttsPayload = () => ({
+    // 统一组装请求体，保存和预加载两条路径使用完全相同的设置快照。
     enabled: ttsEnabled,
     api_url: ttsUrl,
     api_style: ttsStyle,
@@ -88,11 +128,13 @@ export default function DeepSeekSettings({ open, onClose }) {
     try {
       const payload = ttsPayload();
       storeSpeed(payload.speed);
+      // DeepSeek 与 TTS 设置互不依赖，并行保存可缩短用户等待时间。
       const [deepseek, tts] = await Promise.all([
         api.updateDeepSeekSettings({ api_key: apiKey, api_base: apiBase, model, mock }),
         api.updateTTSSettings(payload),
       ]);
       setMasked(deepseek.api_key_masked);
+      // 保存后清空密钥明文，只保留掩码，降低浏览器内存中长期驻留的风险。
       setApiKey("");
       if (typeof tts.speed === "number") updateSpeed(tts.speed);
       setMessage("设置已保存。");
@@ -109,6 +151,7 @@ export default function DeepSeekSettings({ open, onClose }) {
     try {
       const payload = ttsPayload();
       storeSpeed(payload.speed);
+      // 先落库再预加载，保证后端按界面当前选择的引擎、设备和音色初始化。
       await api.updateTTSSettings(payload);
       const data = await api.preloadTTS();
       setMessage(data.detail || "语音模型已加载。");
@@ -120,6 +163,7 @@ export default function DeepSeekSettings({ open, onClose }) {
   };
 
   const usingKokoro = ttsStyle === "kokoro";
+  const usingSherpa = ttsStyle === "sherpa";
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 px-4">
@@ -176,9 +220,10 @@ export default function DeepSeekSettings({ open, onClose }) {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="语音引擎">
-              <select className="w-full rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-stone-900" value={ttsStyle} onChange={(event) => setTtsStyle(event.target.value)}>
+              <select className="w-full rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-stone-900" value={ttsStyle} onChange={(event) => selectTtsStyle(event.target.value)}>
                 <option value="browser">浏览器自带 TTS，响应最快</option>
                 <option value="kokoro">Kokoro 本地模型，音质更自然</option>
+                <option value="sherpa">Sherpa 原生中英文，轻量离线</option>
               </select>
             </Field>
             <Field label="推理设备">
@@ -232,6 +277,34 @@ export default function DeepSeekSettings({ open, onClose }) {
               </button>
             </>
           )}
+
+          {usingSherpa && (
+            <>
+              <p className="mb-3 text-sm leading-6 text-stone-600">
+                原生 ONNX CPU 推理。首次加载会下载中英文模型，之后完全离线运行并复用语音缓存。
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="中文 Voice">
+                  <select className="w-full rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-stone-900" value={ttsVoice} onChange={(event) => setTtsVoice(event.target.value)}>
+                    {SHERPA_CHINESE_VOICES.map((voice) => (
+                      <option key={voice.value} value={voice.value}>{voice.label}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="英文 Voice">
+                  <select className="w-full rounded-md border border-stone-300 px-3 py-2 outline-none focus:border-stone-900" value={ttsEnglishVoice} onChange={(event) => setTtsEnglishVoice(event.target.value)}>
+                    {SHERPA_ENGLISH_VOICES.map((voice) => (
+                      <option key={voice.value} value={voice.value}>{voice.label}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <button type="button" className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-300 px-3 text-sm hover:bg-stone-50 disabled:opacity-50" onClick={preload} disabled={preloading}>
+                {preloading ? <Loader2 className="animate-spin" size={15} /> : <Volume2 size={15} />}
+                下载并加载 Sherpa 模型
+              </button>
+            </>
+          )}
         </section>
 
         {message && <p className="mt-4 rounded-md bg-stone-100 px-3 py-2 text-sm text-stone-700">{message}</p>}
@@ -254,9 +327,10 @@ function Field({ label, children }) {
   );
 }
 
-function readStoredSpeed() {
-  if (typeof window === "undefined") return 0.8;
-  return clampSpeed(window.localStorage.getItem(SPEED_STORAGE_KEY) ?? 0.8);
+function readStoredSpeed(fallback = 0.8) {
+  // SSR 或测试环境没有 window，此时安全回退，不在模块导入阶段抛错。
+  if (typeof window === "undefined") return clampSpeed(fallback);
+  return clampSpeed(window.localStorage.getItem(SPEED_STORAGE_KEY) ?? fallback);
 }
 
 function storeSpeed(value) {
@@ -265,6 +339,7 @@ function storeSpeed(value) {
 }
 
 function clampSpeed(value) {
+  // UI 与后端共同限制 0.2 至 2 倍；非法输入恢复 0.8，防止 NaN 进入控件。
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0.8;
   return Math.min(2, Math.max(0.2, parsed));

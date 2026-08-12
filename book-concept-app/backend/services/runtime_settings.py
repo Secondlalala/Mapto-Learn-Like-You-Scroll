@@ -43,13 +43,14 @@ def get_deepseek_config() -> dict:
 def get_tts_config() -> dict:
     env = get_settings()
     runtime = read_runtime_settings()
+    api_style = runtime.get("tts_api_style") or env.tts_api_style
     lang_code = runtime.get("tts_lang_code") or env.tts_lang_code or "z"
-    if lang_code == "auto":
+    if api_style == "kokoro" and lang_code == "auto":
         lang_code = "z"
     return {
         "enabled": bool(runtime.get("tts_enabled", env.tts_enabled)),
         "api_url": runtime.get("tts_api_url") or env.tts_api_url,
-        "api_style": runtime.get("tts_api_style") or env.tts_api_style,
+        "api_style": api_style,
         "voice": runtime.get("tts_voice") or env.tts_voice,
         "english_voice": runtime.get("tts_english_voice") or env.tts_english_voice,
         "model": runtime.get("tts_model") or env.tts_model,

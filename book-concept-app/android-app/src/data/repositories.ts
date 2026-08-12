@@ -70,6 +70,9 @@ function toOutlineNode(row: Row): OutlineNode {
 }
 
 function toCard(row: Row): ConceptCard {
+  // 同时兼容早期数据库字段和当前字段，保证应用升级后旧卡片仍可读取。
+  // 新字段优先；只有新字段为空时才回退到 summary、body、formulae 等旧字段，
+  // 从而避免迁移过程中覆盖用户已经收藏或阅读过的本地数据。
   const legacyFormulae = fromJsonArray(row.formulae);
   return {
     id: asString(row.id),
@@ -247,6 +250,8 @@ export function createRepositories(database: Database): Repositories {
       if (outline.some(node => node.bookId !== book.id)) {
         throw new Error('Outline nodes must belong to the imported book');
       }
+      // 书籍正文与完整大纲必须作为一个事务写入。
+      // 如果任意小节保存失败，整次导入都会回滚，避免出现“书籍存在但大纲残缺”的不可恢复状态。
       await database.transaction(async transaction => {
         await transaction.execute(
           `INSERT INTO books (
@@ -285,6 +290,8 @@ export function createRepositories(database: Database): Repositories {
     insertCard: card => insertCard(database, card),
 
     async listCards(bookId) {
+      // 卡片顺序以原文位置为主，并把每节的“章节导览”放在普通概念卡之前。
+      // card_position 用于稳定同一节内的生成顺序，最后用 id 消除相同位置下的随机排序。
       const result = await database.execute(
         `SELECT cards.* FROM cards
          JOIN outline_nodes ON outline_nodes.id = cards.section_id
@@ -341,6 +348,8 @@ export function createRepositories(database: Database): Repositories {
     },
 
     async claimSectionForGeneration(sectionId, claimToken, updatedAt) {
+      // 先把 queued/failed 小节原子地改成 generating，再把本次 claimToken 暂存在状态表中。
+      // 事务结束后只有读回同一 token 的调用者才获得生成权，可阻止阅读预取和手动按钮重复调用 DeepSeek。
       await database.transaction(async transaction => {
         await transaction.execute(
           `UPDATE outline_nodes
@@ -412,6 +421,8 @@ export function createRepositories(database: Database): Repositories {
         throw new Error('Invalid generation cursor');
       }
       const updatedAt = requestedUpdatedAt ?? new Date().toISOString();
+      // 新卡片、生成游标和小节状态在同一个事务中提交。
+      // 即使应用在保存过程中退出，也不会出现卡片已经写入但游标未推进、下次再次重复生成的情况。
       await database.transaction(async transaction => {
         for (const [position, card] of cards.entries()) {
           await insertCard(transaction, card, position);
@@ -456,6 +467,8 @@ export function createRepositories(database: Database): Repositories {
     },
 
     async upsertTtsCache(entry) {
+      // 缓存记录只保存本地音频路径和生成参数，不把音频二进制写入 SQLite。
+      // 同一 cache_key 再次命中时更新访问时间，后续可以据此实现容量清理和最近使用策略。
       await database.execute(
         `INSERT INTO tts_cache (
           cache_key, file_path, voice, speed, model_version, settings, created_at, last_accessed_at

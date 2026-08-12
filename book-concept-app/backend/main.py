@@ -16,6 +16,8 @@ from services.kokoro_manager import start_kokoro_if_enabled
 settings = get_settings()
 app = FastAPI(title="Book Concept App API", version="0.1.0")
 
+# 开发模式下前端端口可能变化，因此同时允许配置来源和本机动态端口。
+# API Key 只由后端保存与调用，浏览器跨域访问不会获得密钥原文。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin, "http://127.0.0.1:5173"],
@@ -28,6 +30,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
+    # 后端启动时先保证数据库结构可用，再按当前设置按需拉起本地语音服务。
     init_db()
     start_kokoro_if_enabled()
 
@@ -46,6 +49,8 @@ app.include_router(tts.router)
 
 
 def _find_frontend_dist() -> Path:
+    # 查找顺序同时覆盖源码开发目录、PyInstaller 临时解包目录和安装目录。
+    # 这样同一套 FastAPI 入口既能独立运行，也能在桌面安装包中托管前端。
     configured = os.getenv("BOOK_CONCEPT_FRONTEND_DIST")
     if configured:
         configured_path = Path(configured)
@@ -72,6 +77,7 @@ def _find_frontend_dist() -> Path:
 
 FRONTEND_DIST = _find_frontend_dist()
 if FRONTEND_DIST.exists():
+    # Vite 构建后的静态资源使用 /assets 路径，单独挂载可避免被 SPA 回退接管。
     assets_dir = FRONTEND_DIST / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
@@ -79,6 +85,7 @@ if FRONTEND_DIST.exists():
 
 @app.get("/")
 def root():
+    # 已构建前端时直接返回网页首页；开发模式未构建时返回后端诊断信息。
     index_file = FRONTEND_DIST / "index.html"
     if index_file.exists():
         return FileResponse(index_file)
@@ -93,6 +100,8 @@ def root():
 
 @app.get("/{full_path:path}")
 def frontend_fallback(full_path: str):
+    # 浏览器刷新前端子路由时仍返回 index.html，由 React 接管页面状态。
+    # API 未命中时必须保持 JSON 404，不能误返回 HTML 导致前端解析失败。
     if full_path.startswith("api/"):
         return {"detail": "Not Found"}
     index_file = FRONTEND_DIST / "index.html"

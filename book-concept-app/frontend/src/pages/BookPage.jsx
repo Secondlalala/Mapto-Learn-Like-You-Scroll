@@ -10,6 +10,7 @@ export default function BookPage({ bookId, onRead }) {
   const [message, setMessage] = useState("");
 
   const load = async () => {
+    // 书籍元数据和卡片列表并行加载，页面标题、数量和按钮状态保持同一批数据。
     const [bookData, cardData] = await Promise.all([api.getBook(bookId), api.listCards(bookId)]);
     setBook(bookData);
     setCards(cardData);
@@ -24,6 +25,7 @@ export default function BookPage({ bookId, onRead }) {
     setError("");
     setMessage(force ? "正在清空旧卡片，并从第一节重新生成..." : "正在按小节生成，单次最多 20 张卡片...");
     try {
+      // force 模式由后端删除旧体系；前端同步清除旧卡片对应的阅读位置。
       const data = await api.generateCards(bookId, { force });
       if (force) localStorage.removeItem(`reader-progress-${bookId}`);
       await load();
@@ -93,6 +95,7 @@ export default function BookPage({ bookId, onRead }) {
       )}
 
       <div className="grid gap-3 md:grid-cols-2">
+        {/* 概览页只展示可扫描摘要，完整寓言、公式和关系在沉浸阅读页展开。 */}
         {cards.map((card) => (
           <article key={card.id} className="rounded-md border border-stone-200 bg-white p-4 shadow-sm">
             <p className="text-xs text-stone-500">

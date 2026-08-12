@@ -7,6 +7,8 @@ from database import Base
 
 
 class Book(Base):
+    # Book 保存原始全文、解析后的小节 JSON，以及可断点续生成的游标。
+    # generation_cursor 指向下一待生成小节，关闭网页后仍能从数据库恢复进度。
     __tablename__ = "books"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -19,12 +21,14 @@ class Book(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     cards: Mapped[list["ConceptCard"]] = relationship(
+        # 删除书籍时级联删除其知识卡片，避免留下失去归属的记录。
         back_populates="book",
         cascade="all, delete-orphan",
     )
 
 
 class ConceptCard(Base):
+    # 每张卡片绑定书籍和小节序号。card_type 区分章节导览卡与普通概念卡。
     __tablename__ = "concept_cards"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -40,6 +44,7 @@ class ConceptCard(Base):
     formula: Mapped[str] = mapped_column(Text, default="")
     formula_explanation: Mapped[str] = mapped_column(Text, default="")
     prerequisites: Mapped[str] = mapped_column(Text, default="[]")
+    # SQLite 不依赖数据库专用数组类型，列表字段以 JSON 文本保存，API 输出时再还原。
     related_concepts: Mapped[str] = mapped_column(Text, default="[]")
     questions: Mapped[str] = mapped_column(Text, default="[]")
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -53,6 +58,7 @@ class ConceptCard(Base):
 
 
 class ChatMessage(Base):
+    # 追问记录绑定具体卡片，保证切换概念后不会混用另一张卡片的上下文。
     __tablename__ = "chat_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

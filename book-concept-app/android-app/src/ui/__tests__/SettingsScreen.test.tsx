@@ -39,6 +39,22 @@ it('persists DeepSeek and TTS choices including speed from 0.2 to 2.0', async ()
   expect(screen.getByText('AISHELL-3 · 内置中文模型')).toBeTruthy();
 });
 
+it('persists a speed change immediately without pressing save', async () => {
+  const deps = dependencies();
+  render(<SettingsScreen dependencies={deps} />);
+  await screen.findByDisplayValue('deepseek-chat');
+
+  fireEvent.press(screen.getByLabelText('语速增加'));
+
+  await waitFor(() => expect(deps.setTtsPreferences).toHaveBeenCalledWith({
+    engine: 'offline',
+    voice: 'zh-female',
+    speed: 0.9,
+  }));
+  expect(screen.getByText('0.9×')).toBeTruthy();
+  expect(screen.getByText('设置已保存')).toBeTruthy();
+});
+
 it('preloads the bundled Chinese model and reports readiness', async () => {
   const deps = dependencies();
   render(<SettingsScreen dependencies={deps} />);

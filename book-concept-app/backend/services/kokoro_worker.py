@@ -20,6 +20,7 @@ SPEECH_SYMBOL_RE = re.compile(r"[“”„\"‘’'（）()\[\]【】{}《》〈
 
 
 def main() -> None:
+    # worker 使用“一行一个 JSON”的协议与主进程通信，模型可常驻并跨请求复用。
     for line in sys.stdin:
         try:
             payload = json.loads(line)
@@ -34,6 +35,7 @@ def main() -> None:
                 result = {"ok": False, "error": f"未知操作：{op}"}
         except Exception as exc:
             result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        # stdout 只输出协议响应；模型自身日志被重定向到 stderr，避免污染 JSON。
         sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 
@@ -50,6 +52,7 @@ def health() -> dict:
 
 
 def preload(payload: dict) -> dict:
+    # 预加载只构建管线，不产生音频；auto 模式同时准备中英文模型。
     requested_device = _resolve_device(payload.get("device", "auto"))
     lang_code = _normalize_lang_code(payload.get("lang_code", "auto"))
     lang_codes = ["z", "a"] if lang_code == "auto" else [lang_code]
@@ -64,6 +67,7 @@ def preload(payload: dict) -> dict:
 
 
 def tts(payload: dict) -> dict:
+    # 长文本先按句号拆分，再按语言分段，逐段推理后拼接成一个 WAV 响应。
     sentences = _split_sentences(_sanitize_for_speech(payload.get("text", "")))
     if not sentences:
         return {"ok": False, "error": "朗读文本不能为空。"}
@@ -74,6 +78,7 @@ def tts(payload: dict) -> dict:
     for sentence in sentences:
         for segment_text, lang_code, voice in _segments_for_text(sentence, request):
             pipeline = _get_pipeline(lang_code, requested_device)
+            # Kokoro 可能向 stdout 打印下载进度，必须重定向以保护进程通信协议。
             with contextlib.redirect_stdout(sys.stderr):
                 generator = pipeline(
                     segment_text,
@@ -86,6 +91,7 @@ def tts(payload: dict) -> dict:
     if not pieces:
         return {"ok": False, "error": "Kokoro 没有返回音频。"}
 
+    # 音频以 Base64 放入 JSON 返回；主进程解码后再写入缓存或交给浏览器。
     audio = np.concatenate(pieces).astype(np.float32)
     buffer = BytesIO()
     sf.write(buffer, audio, SAMPLE_RATE, format="WAV")
@@ -109,6 +115,7 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def _segments_for_text(text: str, payload: TTSLike) -> list[tuple[str, str, str]]:
+    # 中文使用 z 管线和中文音色，英文使用 a/b 管线和独立英文音色。
     lang_code = _normalize_lang_code(payload.lang_code)
     if lang_code != "auto":
         return [(text, lang_code, _voice_for_lang(lang_code, payload))]
@@ -150,6 +157,7 @@ def _has_chinese(text: str) -> bool:
 
 
 def _sanitize_for_speech(text: str) -> str:
+    # 清洗规则与 HTTP 服务保持一致，确保两种部署路径得到相同停顿和发音。
     cleaned = str(text or "")
     cleaned = re.sub(r"[，、]", "，", cleaned)
     cleaned = re.sub(r"[：:]", "，", cleaned)
@@ -165,6 +173,7 @@ def _sanitize_for_speech(text: str) -> str:
 
 
 def _resolve_device(device: str | None) -> str:
+    # auto 优先选择可用的 NVIDIA CUDA；显卡不可用时回退 CPU 保持功能可用。
     value = (device or "auto").strip().lower()
     if value in {"cpu", "cuda"}:
         if value == "cuda" and not _cuda_available():
@@ -199,6 +208,7 @@ def _torch_status() -> dict:
 
 def _get_pipeline(lang_code: str, device: str):
     key = (lang_code, device)
+    # 同一进程只加载一份相同语言和设备的模型，锁避免并发初始化耗尽显存。
     with _lock:
         if key in _pipelines:
             return _pipelines[key]

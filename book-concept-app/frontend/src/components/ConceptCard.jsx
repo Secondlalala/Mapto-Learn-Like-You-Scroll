@@ -6,10 +6,12 @@ import VoiceButton from "./VoiceButton";
 import RichText from "./RichText";
 
 export default function ConceptCard({ card, index, total, onFavorite }) {
+  // 原文、知识关系和复制反馈都是卡片自身的临时界面状态，切换卡片后互不影响。
   const [copied, setCopied] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const [deep, setDeep] = useState(false);
 
+  // 复制内容按学习顺序组织，保留换行方便粘贴到笔记软件继续整理。
   const text = `${card.title}\n${card.one_sentence}\n\n${card.simple_explanation}\n\n${card.fable}\n\n${card.formula}`;
   const isOverview = card.card_type === "section_overview";
 
@@ -20,6 +22,7 @@ export default function ConceptCard({ card, index, total, onFavorite }) {
   };
 
   const favorite = async () => {
+    // 以后端返回值为准更新父级列表，避免本地乐观切换与数据库状态不一致。
     const data = await api.toggleFavorite(card.id);
     onFavorite(card.id, data.is_favorite);
   };
@@ -54,6 +57,7 @@ export default function ConceptCard({ card, index, total, onFavorite }) {
           <RichText text={card.simple_explanation} />
         </Section>
 
+        {/* 寓言按钮显式关闭上下文拼接，只朗读当前寓言，不重复标题与一句话解释。 */}
         <Section
           title="寓言故事"
           icon={<Quote size={16} />}
@@ -93,6 +97,8 @@ function FormulaText({ formula }) {
 }
 
 function normalizeFormula(value) {
+  // DeepSeek 可能返回裸公式或四种常见边界，统一包装后交由 RichText/KaTeX 渲染。
+  // 已经带边界的公式保持原样，防止重复包裹产生无法解析的美元符号。
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (/^\$\$[\s\S]*\$\$$/.test(raw)) return raw;
@@ -123,6 +129,7 @@ function Section({ title, icon, action, children }) {
 }
 
 function PillList({ title, items }) {
+  // 前置知识与关联概念采用同一小组件，保证空格、换行和移动端折行规则一致。
   return (
     <div className="rounded-md border border-stone-200 p-3">
       <h3 className="mb-2 text-sm font-semibold text-stone-500">{title}</h3>

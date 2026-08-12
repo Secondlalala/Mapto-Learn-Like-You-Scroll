@@ -7,11 +7,14 @@ import CardReaderPage from "./pages/CardReaderPage";
 import DeepSeekSettings from "./components/DeepSeekSettings";
 
 export default function App() {
+  // MVP 不依赖路由库，顶层 route 状态在上传、书籍详情和沉浸阅读三种视图间切换。
+  // 书籍数据集中保存在 App，上传完成后刷新即可同步顶部数量和书库列表。
   const [route, setRoute] = useState({ name: "upload" });
   const [books, setBooks] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const refreshBooks = async () => {
+    // 后端不可达时保留可渲染的空列表，避免整个应用因首页请求失败而白屏。
     try {
       setBooks(await api.listBooks());
     } catch {
@@ -65,6 +68,7 @@ export default function App() {
       </header>
 
       <div className="pt-14">
+        {/* 三个页面共享固定顶部栏，但只挂载当前页面，避免隐藏页面继续发起请求。 */}
         {route.name === "upload" && (
           <UploadPage
             books={books}

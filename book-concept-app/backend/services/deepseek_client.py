@@ -15,6 +15,7 @@ class DeepSeekNotConfiguredError(RuntimeError):
 
 class DeepSeekClient:
     def __init__(self):
+        # 每次业务请求创建客户端并读取当前运行时设置，使网页刚保存的配置立即生效。
         self.config = get_deepseek_config()
 
     async def generate_cards_from_section(
@@ -24,11 +25,13 @@ class DeepSeekClient:
         target_count: int = 6,
         include_overview: bool = True,
     ) -> list[dict[str, Any]]:
+        # mock 模式用于无密钥演示；真实模式必须明确配置 API Key，不能静默伪造结果。
         if self.config["mock"]:
             return self._mock_section_cards(section_text, section_title, target_count, include_overview)
         if not self.config["api_key"]:
             raise DeepSeekNotConfiguredError("请先在 DeepSeek 设置中填写 API Key。")
 
+        # 导览卡规则根据数据库中是否已有导览动态切换，保证整节只有一个体系入口。
         overview_rule = (
             "第一张必须是 section_overview 类型的导览卡，介绍为什么需要这一节、它能做什么、会展开哪些下级概念，并用一个完整寓言概括本节。"
             if include_overview
@@ -69,16 +72,19 @@ JSON 对象格式：
 
 小节内容：
 {section_text}"""
+        # 卡片属于结构化抽取任务，使用较低温度减少字段遗漏和 JSON 波动。
         content = await self._chat(prompt, temperature=0.25)
         try:
             data = _json_from_text(content)
         except JSONDecodeError as exc:
             raise RuntimeError(f"DeepSeek 返回内容不是合法 JSON：{content[:500]}") from exc
+        # 即便 JSON 合法，也只接受“对象数组”；其他类型视为本轮没有可保存卡片。
         if not isinstance(data, list):
             return []
         return [item for item in data if isinstance(item, dict)]
 
     async def answer_question(self, card: Any, question: str) -> str:
+        # 追问提示包含卡片原文、已有解释和核心公式，让回答限定在当前知识点上下文。
         if self.config["mock"]:
             return (
                 f"可以这样理解：你问的是“{question}”。围绕 {card.title}，先看它在当前小节中的位置，"
@@ -115,9 +121,11 @@ JSON 对象格式：
 3. 不要使用 Unicode 近似符号替代 LaTeX，例如不要只写 ∫、ψ、ϕ；应写 $\\int$、$\\psi$、$\\phi$。
 4. 解释每个公式符号的含义。
 5. 回答要服务于“本节知识体系”，说明它和上下级概念的关系。"""
+        # 追问允许略高温度以获得更自然的教学表达，但仍保持较低随机性。
         return await self._chat(prompt, temperature=0.35)
 
     async def _chat(self, prompt: str, temperature: float = 0.35) -> str:
+        # DeepSeek 使用与 OpenAI Chat Completions 兼容的请求格式，密钥只放在后端请求头。
         url = f"{self.config['api_base'].rstrip('/')}/chat/completions"
         headers = {"Authorization": f"Bearer {self.config['api_key']}"}
         payload = {
@@ -125,6 +133,7 @@ JSON 对象格式：
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
         }
+        # 超时单独转换为可读错误，用户可以据此缩短小节或稍后重试。
         try:
             async with httpx.AsyncClient(timeout=35) as client:
                 resp = await client.post(url, headers=headers, json=payload)
@@ -132,6 +141,7 @@ JSON 对象格式：
             raise RuntimeError("DeepSeek API 请求超时，请稍后重试或减少单次生成内容。") from exc
         except httpx.HTTPError as exc:
             raise RuntimeError(f"DeepSeek API 网络连接失败：{exc}") from exc
+        # 同时校验 HTTP 状态和响应 JSON 层级，避免把网关错误页当作模型答案。
         try:
             if resp.status_code >= 400:
                 detail = resp.text[:500]
@@ -148,6 +158,7 @@ JSON 对象格式：
         target_count: int,
         include_overview: bool,
     ) -> list[dict[str, Any]]:
+        # mock 数据保持与真实接口完全相同的字段结构，便于前端离线联调。
         cards: list[dict[str, Any]] = []
         if include_overview:
             cards.append(
@@ -184,6 +195,7 @@ JSON 对象格式：
 
 
 def _json_from_text(text: str) -> Any:
+    # 优先解析纯 JSON；若模型意外包裹 Markdown 代码块或说明文字，再截取首尾 JSON。
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`")
@@ -191,6 +203,7 @@ def _json_from_text(text: str) -> Any:
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
+        # 同时兼容对象和数组起始符，并选择最早出现的位置作为候选 JSON 起点。
         start_candidates = [i for i in [cleaned.find("{"), cleaned.find("[")] if i >= 0]
         if not start_candidates:
             raise

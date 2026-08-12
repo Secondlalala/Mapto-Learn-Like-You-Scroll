@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 
 class BookOut(BaseModel):
+    # 书籍列表仅暴露元数据和生成进度，不把体积较大的 raw_text 返回给浏览器。
     id: int
     title: str
     filename: str
@@ -31,6 +32,7 @@ class GenerateCardsOut(BaseModel):
 
 
 class ConceptCardOut(BaseModel):
+    # 数据库中的三个 JSON 文本列表在服务层还原后，以强类型数组交给前端。
     id: int
     book_id: int
     section_index: int = 0
@@ -74,6 +76,7 @@ class ChatMessageOut(BaseModel):
 
 
 class DeepSeekSettingsIn(BaseModel):
+    # 设置字段允许局部更新；None 表示本次请求不改变该项。
     api_key: str | None = None
     api_base: str | None = None
     model: str | None = None
@@ -113,6 +116,7 @@ class TTSSettingsOut(BaseModel):
 
 
 class SpeechIn(BaseModel):
+    # 单次朗读允许覆盖全局语速，便于用户调节后立即试听而无需重启模型。
     text: str
     speed: float | None = None
 

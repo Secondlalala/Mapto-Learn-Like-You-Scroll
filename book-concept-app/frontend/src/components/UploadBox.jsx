@@ -2,6 +2,7 @@ import { Upload } from "lucide-react";
 import { useRef } from "react";
 
 export default function UploadBox({ busy, onUpload }) {
+  // 隐藏原生文件输入框，由统一样式按钮触发；拖拽与选择最终调用同一上传函数。
   const inputRef = useRef(null);
 
   return (
@@ -10,6 +11,7 @@ export default function UploadBox({ busy, onUpload }) {
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
+        // MVP 每次只处理第一个文件，批量导入留给后续版本。
         const file = event.dataTransfer.files?.[0];
         if (file) onUpload(file);
       }}
@@ -36,4 +38,3 @@ export default function UploadBox({ busy, onUpload }) {
     </div>
   );
 }
-

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 app = FastAPI(title="Local Kokoro TTS Service")
 
 _pipelines: dict[tuple[str, str], object] = {}
+# 模型管线按“语言 + 设备”缓存；锁用于阻止多个请求同时重复加载同一份模型。
 _pipeline_lock = Lock()
 _load_error = ""
 SAMPLE_RATE = 24000
@@ -53,16 +54,19 @@ def health():
 
 @app.post("/tts")
 async def tts(payload: TTSRequest):
+    # 输入先清洗特殊符号，再按句号拆句，降低长文本一次推理造成的停顿和显存峰值。
     sentences = _split_sentences(_sanitize_for_speech(payload.text))
     if not sentences:
         raise HTTPException(status_code=400, detail="朗读文本不能为空。")
 
+    # auto 优先使用 CUDA；每句话再按中英文切段，为不同语言选择对应音色。
     requested_device = _resolve_device(payload.device)
     pieces: list[np.ndarray] = []
     for sentence in sentences:
         for segment_text, lang_code, voice in _segments_for_text(sentence, payload):
             pipeline = _get_pipeline(lang_code, requested_device)
             try:
+                # 已由本层完成分句，因此禁用 Kokoro 内部分割，避免产生双重停顿。
                 generator = pipeline(
                     segment_text,
                     voice=voice,
@@ -76,6 +80,7 @@ async def tts(payload: TTSRequest):
     if not pieces:
         raise HTTPException(status_code=500, detail="Kokoro 没有返回音频。")
 
+    # 各句音频按顺序无缝拼接成标准 WAV，浏览器可直接播放并进行磁盘缓存。
     audio = np.concatenate(pieces).astype(np.float32)
     buffer = BytesIO()
     sf.write(buffer, audio, SAMPLE_RATE, format="WAV")
@@ -84,6 +89,7 @@ async def tts(payload: TTSRequest):
 
 @app.post("/preload")
 async def preload(payload: dict | None = None):
+    # auto 语言会同时预热中文和英文管线，首次遇到混合文本时无需再次加载。
     payload = payload or {}
     requested_device = _resolve_device(payload.get("device", "auto"))
     lang_code = _normalize_lang_code(payload.get("lang_code", "auto"))
@@ -99,10 +105,12 @@ async def preload(payload: dict | None = None):
 
 
 def _split_sentences(text: str) -> list[str]:
+    # 为每段补回句号，让模型保留自然的句末语调。
     return [f"{item.strip()}。" for item in text.split("。") if item.strip()]
 
 
 def _segments_for_text(text: str, payload: TTSRequest) -> list[tuple[str, str, str]]:
+    # 指定语言时整句使用固定管线；auto 模式才逐字符识别中英文边界。
     lang_code = _normalize_lang_code(payload.lang_code)
     if lang_code != "auto":
         return [(text, lang_code, _voice_for_lang(lang_code, payload))]
@@ -110,6 +118,7 @@ def _segments_for_text(text: str, payload: TTSRequest) -> list[tuple[str, str, s
     segments: list[tuple[str, str, str]] = []
     current_lang = "z" if _has_chinese(text[:1]) else "a"
     current = ""
+    # 空格不触发语言切换，避免英文单词之间被拆成大量短音频。
     for char in text:
         char_lang = "z" if _has_chinese(char) else "a"
         if current and char_lang != current_lang and not char.isspace():
@@ -144,6 +153,8 @@ def _has_chinese(text: str) -> bool:
 
 
 def _sanitize_for_speech(text: str) -> str:
+    # 冒号、分号等统一为可控停顿，只保留中英文、数字、中文逗号和句号。
+    # 此转换仅影响送入语音模型的副本，不修改页面显示的原始卡片内容。
     cleaned = str(text or "")
     cleaned = re.sub(r"[，,、]", "，", cleaned)
     cleaned = re.sub(r"[。.!?！？；;：:\n\r]+", "。", cleaned)
@@ -158,6 +169,7 @@ def _sanitize_for_speech(text: str) -> str:
 
 
 def _resolve_device(device: str | None) -> str:
+    # 用户强制 CUDA 但环境不可用时安全回退 CPU，避免整个 TTS 接口直接崩溃。
     value = (device or "auto").strip().lower()
     if value in {"cpu", "cuda"}:
         if value == "cuda" and not _cuda_available():
@@ -193,6 +205,7 @@ def _torch_status() -> dict:
 def _get_pipeline(lang_code: str, device: str):
     global _load_error
     key = (lang_code, device)
+    # 加载过程串行化；加载完成后后续请求直接复用内存中的 KPipeline。
     with _pipeline_lock:
         if key in _pipelines:
             return _pipelines[key]
@@ -209,6 +222,7 @@ def _get_pipeline(lang_code: str, device: str):
 
 
 def _to_numpy(audio) -> np.ndarray:
+    # 兼容 PyTorch Tensor 与 NumPy 数组，并统一成一维 float32 音频数据。
     if hasattr(audio, "detach"):
         audio = audio.detach().cpu().numpy()
     elif hasattr(audio, "cpu"):

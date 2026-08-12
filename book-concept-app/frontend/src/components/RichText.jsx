@@ -2,6 +2,7 @@ import katex from "katex";
 import "katex/dist/katex.min.css";
 
 export default function RichText({ text = "" }) {
+  // 先解析为段落、列表和块公式，再分别渲染，避免直接输出模型返回的 HTML。
   const blocks = splitBlocks(text);
   return (
     <div className="space-y-3 text-sm leading-7 text-stone-800">
@@ -25,6 +26,7 @@ export default function RichText({ text = "" }) {
 }
 
 function MathBlock({ latex }) {
+  // 块公式允许水平滚动，较长的推导不会撑破卡片宽度或覆盖相邻内容。
   return (
     <div className="overflow-x-auto rounded-md bg-stone-50 px-3 py-3 text-center">
       <span dangerouslySetInnerHTML={{ __html: renderKatex(latex, true) }} />
@@ -33,6 +35,8 @@ function MathBlock({ latex }) {
 }
 
 function splitBlocks(text) {
+  // DeepSeek 可能返回 $...$、$$...$$、\(...\) 或 \[...\] 四种公式边界。
+  // 先统一成美元符号格式，再区分块级公式、列表和普通段落，避免公式被当作纯文本换行。
   const normalized = String(text || "")
     .replace(/\r\n/g, "\n")
     .replace(/\\\[/g, "$$")
@@ -60,6 +64,7 @@ function splitBlocks(text) {
 }
 
 function renderInlineMath(text) {
+  // 普通文字保持 React 文本节点，只有成对的单美元符号片段进入 KaTeX。
   const parts = String(text).split(/(\$[^$\n]+\$)/g).filter(Boolean);
   return parts.map((part, index) => {
     if (part.startsWith("$") && part.endsWith("$")) {
@@ -77,6 +82,8 @@ function renderInlineMath(text) {
 
 function renderKatex(latex, displayMode) {
   try {
+    // 禁止 KaTeX trust 模式，模型返回的公式不能注入链接、HTML 或其他受信任命令。
+    // throwOnError=false 让局部公式错误不会中断整张卡片；真正的异常再回退为转义后的原文。
     return katex.renderToString(latex, {
       displayMode,
       throwOnError: false,
@@ -89,10 +96,10 @@ function renderKatex(latex, displayMode) {
 }
 
 function escapeHtml(value) {
+  // KaTeX 极端异常时回显经过转义的原公式，既保留可读信息又避免 HTML 注入。
   return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-

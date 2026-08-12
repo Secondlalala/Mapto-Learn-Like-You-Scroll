@@ -9,6 +9,7 @@ export default function ChatPanel({ card }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    // 切换活动卡片时重新加载该卡片的独立历史，避免不同概念的对话混在一起。
     if (!card) return;
     api.listMessages(card.id).then(setMessages).catch(() => setMessages([]));
   }, [card?.id]);
@@ -18,9 +19,11 @@ export default function ChatPanel({ card }) {
     if (!content || !card) return;
     setBusy(true);
     setQuestion("");
+    // 先乐观显示用户问题，减少网络等待造成的“点击无反应”感。
     setMessages((items) => [...items, { role: "user", content }]);
     try {
       const data = await api.ask(card.id, content);
+      // 模型回答交给 RichText 解析，使段落、列表和 LaTeX 公式保持可读排版。
       setMessages((items) => [...items, { role: "assistant", content: data.answer }]);
     } finally {
       setBusy(false);
@@ -34,6 +37,7 @@ export default function ChatPanel({ card }) {
         <p className="mt-1 truncate text-sm text-stone-500">{card?.title || "未选择卡片"}</p>
       </div>
       <div className="space-y-2 border-b border-stone-100 p-3">
+        {/* 推荐问题与自由输入共用 ask，保证上下文绑定和保存逻辑完全一致。 */}
         {card?.questions?.map((item) => (
           <button key={item} className="block w-full rounded-md bg-stone-100 px-3 py-2 text-left text-sm leading-5 hover:bg-stone-200" onClick={() => ask(item)}>
             {item}
@@ -74,4 +78,3 @@ export default function ChatPanel({ card }) {
     </aside>
   );
 }
-

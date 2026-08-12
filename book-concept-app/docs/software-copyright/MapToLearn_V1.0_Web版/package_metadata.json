@@ -1,0 +1,17 @@
+{
+  "software_name": "MapToLearn AI书籍概念化学习软件",
+  "version": "V1.0",
+  "documents": [
+    "01_软件著作权登记申请信息表_填报底稿.docx",
+    "02_用户操作说明书.docx",
+    "03_软件设计说明书.docx",
+    "05_提交材料检查清单.docx"
+  ],
+  "source_pdf": "04_源程序鉴别材料_60页.pdf",
+  "source_docx": "04_源程序鉴别材料_60页.docx",
+  "manifest": "06_源程序文件清单.csv",
+  "readme": "README_申报说明.md",
+  "production_source_files": 40,
+  "production_source_lines": 4097,
+  "eligible_source_entries": 3539
+}

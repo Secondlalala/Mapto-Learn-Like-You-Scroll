@@ -27,6 +27,9 @@ class MapToLearnTtsModule(private val context: ReactApplicationContext) :
     private const val MODEL_VERSION = "sherpa-onnx-1.13.4-aishell3"
   }
 
+  // ONNX 推理和模型初始化统一放在单线程队列中执行。
+  // 这样可以避免用户连续点击朗读时并发访问同一个 OfflineTts 实例，
+  // 同时把耗时工作移出 React Native 主线程，防止界面在生成语音时卡住。
   private val executor = Executors.newSingleThreadExecutor()
   private val mainHandler = Handler(Looper.getMainLooper())
   private var offlineTts: OfflineTts? = null
@@ -58,6 +61,9 @@ class MapToLearnTtsModule(private val context: ReactApplicationContext) :
         val speed = requestedSpeed.coerceIn(0.2, 2.0).toFloat()
         val tts = ensureOfflineTts()
         val speakerId = requestedSpeakerId.toInt().coerceIn(0, max(0, tts.numSpeakers() - 1))
+        // 缓存键同时包含模型版本、说话人、语速和清洗后的文本。
+        // 任一参数变化都会生成新的音频文件，避免错误复用旧语速或旧音色；
+        // 使用摘要作为文件名也能规避正文过长以及文件名非法字符问题。
         val cacheKey = sha256("$MODEL_VERSION\u0000$speakerId\u0000$speed\u0000$cleanText")
         val cacheDir = File(context.cacheDir, "offline-tts").apply { mkdirs() }
         val output = File(cacheDir, "$cacheKey.wav")
@@ -131,6 +137,9 @@ class MapToLearnTtsModule(private val context: ReactApplicationContext) :
 
   private fun ensureOfflineTts(): OfflineTts {
     offlineTts?.let { return it }
+    // 规则 FST 负责日期、数字和多音字等中文文本的规范化。
+    // 线程数根据设备核心数限制在 2 到 4 之间，在推理速度、发热和内存占用之间取平衡。
+    // 模型实例只初始化一次，后续朗读直接复用，减少首次之后的等待时间。
     val ruleFsts = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
       .joinToString(",") { "$MODEL_DIR/$it" }
     val config = getOfflineTtsConfig(
@@ -156,6 +165,9 @@ class MapToLearnTtsModule(private val context: ReactApplicationContext) :
     speakerId: Int,
     output: File,
   ) {
+    // 长文本先按句号和逗号拆成模型更容易处理的短句，再逐句推理。
+    // 合并时在相邻句子间插入 80 毫秒静音，既避免句尾粘连，也不会产生明显长停顿。
+    // 所有片段必须使用同一采样率，否则合并后的 WAV 将无法正确播放。
     val pieces = splitForInference(text).map { sentence ->
       tts.generate(sentence, sid = speakerId, speed = speed)
     }
@@ -212,6 +224,9 @@ class MapToLearnTtsModule(private val context: ReactApplicationContext) :
   }
 
   private fun sanitizeForSpeech(source: String): String {
+    // 语音模型只保留文字、数字、中文逗号和句号。
+    // 冒号改为逗号以保留语义停顿；公式括号、引号和装饰符号替换为空格，
+    // 防止模型把符号读成异常音节。连续标点和空白最后会被归一化。
     return source
       .replace(Regex("[：:]"), "，")
       .replace(Regex("[，,、]+"), "，")
@@ -225,6 +240,8 @@ class MapToLearnTtsModule(private val context: ReactApplicationContext) :
   }
 
   private fun splitForInference(text: String): List<String> {
+    // 句号是首选切分边界。单句超过 120 字时再按逗号拆分，并尽量把短分句重新组合到上限内。
+    // 返回结果统一补句号，确保模型在每个片段末尾产生自然的收尾语调。
     return text.split('。').flatMap { rawSentence ->
       val sentence = rawSentence.trim()
       if (sentence.length <= 120) {

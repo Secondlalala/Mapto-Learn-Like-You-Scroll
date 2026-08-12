@@ -23,6 +23,7 @@ export default function CardReaderPage({ bookId }) {
   const [autoPrefetch, setAutoPrefetch] = useState(() => localStorage.getItem(autoPrefetchKey) !== "false");
 
   const load = async () => {
+    // 卡片与大纲并行刷新，生成下一节后一次更新阅读区和左侧进度状态。
     const [cardData, outlineData] = await Promise.all([api.listCards(bookId), api.getOutline(bookId)]);
     setCards(cardData);
     setOutline(outlineData);
@@ -30,6 +31,7 @@ export default function CardReaderPage({ bookId }) {
   };
 
   useEffect(() => {
+    // 切换书籍时重置一次性恢复标记和预取防重标记，不能沿用上一册的状态。
     restoredRef.current = false;
     requestedCursorRef.current = null;
     setGenerationStatus("");
@@ -39,6 +41,8 @@ export default function CardReaderPage({ bookId }) {
 
   useEffect(() => {
     if (restoredRef.current || !cards.length) return;
+    // 卡片首次加载完成后只恢复一次阅读位置。
+    // 优先按 cardId 定位可抵抗后台新增卡片导致的索引变化；找不到旧卡片时再回退到保存的 index。
     restoredRef.current = true;
     const saved = readProgress(progressKey);
     const savedIndex = cards.findIndex((card) => card.id === saved.cardId);
@@ -52,6 +56,7 @@ export default function CardReaderPage({ bookId }) {
   useEffect(() => {
     const activeCard = cards[active];
     if (!activeCard) return;
+    // 活动卡片变化时立即保存 cardId 和索引，关闭页面或重启应用后可以继续阅读。
     localStorage.setItem(
       progressKey,
       JSON.stringify({
@@ -63,6 +68,8 @@ export default function CardReaderPage({ bookId }) {
     );
 
     if (autoPrefetch) {
+      // 用户进入当前卡片后立即检查下一节，不再等待固定延时。
+      // 生成任务在后台执行，左侧状态文字会同步展示正在处理的小节和整体进度。
       maybeGenerateNextSection(activeCard);
     }
   }, [active, cards, outline, progressKey, autoPrefetch]);
@@ -72,6 +79,7 @@ export default function CardReaderPage({ bookId }) {
   };
 
   const jumpToSection = (sectionIndex) => {
+    // 一个小节可能包含多张卡，点击大纲时定位该节第一张卡作为入口。
     const target = cards.find((card) => card.section_index === sectionIndex);
     if (!target) return;
     cardRefs.current[target.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -83,7 +91,10 @@ export default function CardReaderPage({ bookId }) {
   };
 
   const maybeGenerateNextSection = async (activeCard = cards[active]) => {
+    // prefetchingRef 防止同一组件内并发请求，requestedCursorRef 防止状态更新期间重复请求同一节。
+    // 两层保护与后端的小节 claim 机制配合，即使快速上下滑动也只会生成一份后续内容。
     if (!activeCard || prefetchingRef.current) return;
+    // 复制后排序，避免原地 sort 改写 React state 并造成不可预测的重渲染。
     const ordered = outline.slice().sort((a, b) => a.index - b.index);
     const currentOutlineIndex = ordered.findIndex((item) => item.index === activeCard.section_index);
     if (currentOutlineIndex < 0) return;
@@ -95,6 +106,7 @@ export default function CardReaderPage({ bookId }) {
     setPrefetching(true);
     setGenerationStatus(`正在生成第 ${currentOutlineIndex + 2} / ${ordered.length} 节：${next.title}`);
     try {
+      // 后端游标决定真正处理的小节，前端的 next 仅用于去重和显示可读进度。
       const result = await api.generateCards(bookId, { force: false });
       setGenerationStatus(`已新增 ${result.generated} 张卡片，进度 ${result.cursor} / ${result.total_sections}`);
       await load();
@@ -147,6 +159,8 @@ export default function CardReaderPage({ bookId }) {
         ref={containerRef}
         className="reader-scroll h-[calc(100vh-56px)] overflow-y-auto bg-[#e8ece6]"
         onScroll={(event) => {
+          // 每张卡固定占满一个阅读视口，因此滚动距离除以容器高度即可得到当前卡片索引。
+          // 四舍五入让卡片越过半屏时才切换活动状态，减少边界附近反复触发后台预生成。
           const index = Math.round(event.currentTarget.scrollTop / event.currentTarget.clientHeight);
           setActive(Math.min(Math.max(index, 0), Math.max(cards.length - 1, 0)));
         }}
@@ -171,6 +185,7 @@ export default function CardReaderPage({ bookId }) {
 }
 
 function readProgress(key) {
+  // localStorage 可能被手工修改或留下旧格式；解析失败时按无历史进度处理。
   try {
     return JSON.parse(localStorage.getItem(key) || "{}");
   } catch {

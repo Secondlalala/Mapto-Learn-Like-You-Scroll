@@ -53,6 +53,8 @@ export class DeepSeekSectionNotClaimableError extends Error {
 }
 
 function validateChatAnswer(content: string): string {
+  // 空回答或公式定界符不完整都会破坏聊天区排版，因此在写入数据库前统一拒绝。
+  // 这里不尝试静默修改模型答案，避免自动修补改变原公式的科学含义。
   const trimmed = content.trim();
   if (!trimmed || !hasValidFormulaNotation(trimmed)) {
     throw new DeepSeekChatValidationError();
@@ -61,6 +63,8 @@ function validateChatAnswer(content: string): string {
 }
 
 function repairMessages(messages: DeepSeekMessage[], invalidContent: string): DeepSeekMessage[] {
+  // 首次结构化输出解析失败时，把原回答原样交还模型并只允许修复一次。
+  // 第二次仍不符合 schema 就向上抛错，防止无上限重试消耗 API 配额。
   return [
     ...messages,
     {role: 'assistant', content: invalidContent},
@@ -84,6 +88,8 @@ function safeFailure(error: unknown): Pick<GenerationState, 'errorCode' | 'error
 }
 
 function resolveChapterTitle(section: OutlineNode, outline: OutlineNode[]): string {
+  // 从当前小节沿 parentId 向上寻找最顶层章节，用于给卡片补充稳定的章节标题。
+  // visited 集合同时防御异常大纲中的循环引用，避免生成流程进入死循环。
   const nodesById = new Map(outline.map(node => [node.id, node]));
   const visited = new Set([section.id]);
   let chapter = section;
@@ -100,6 +106,8 @@ function resolveChapterTitle(section: OutlineNode, outline: OutlineNode[]): stri
 
 export function createDeepSeekGenerator(dependencies: DeepSeekGeneratorDependencies) {
   async function generateSectionImpl(sectionId: string): Promise<GenerationResult> {
+    // 调用 DeepSeek 前先抢占小节生成权。未抢到说明该小节已被后台任务处理或已经完成，
+    // 此时直接返回可识别错误，不能再次请求模型，否则会生成重复卡片。
     const claim = await dependencies.repositories.claimSectionForGeneration(
       sectionId,
       `claim:${dependencies.createClaimToken()}`,
@@ -122,6 +130,7 @@ export function createDeepSeekGenerator(dependencies: DeepSeekGeneratorDependenc
         if (!(error instanceof DeepSeekSchemaError)) {
           throw error;
         }
+        // 只对 schema 错误进行一次定向修复；网络错误和其他异常保持原样交给失败状态处理。
         const repairedContent = await dependencies.client.complete(repairMessages(messages, initialContent));
         generated = parseGeneratedCards(repairedContent);
       }
@@ -145,6 +154,8 @@ export function createDeepSeekGenerator(dependencies: DeepSeekGeneratorDependenc
       );
       return {sectionId, cards};
     } catch (error) {
+      // 失败时保留 previousCursor，不向后推进生成位置。
+      // 用户重试时仍从同一节开始，同时保存可展示的错误码，避免整本书的生成链条断裂。
       const failure = safeFailure(error);
       await dependencies.repositories.setGenerationState({
         sectionId,
@@ -158,6 +169,8 @@ export function createDeepSeekGenerator(dependencies: DeepSeekGeneratorDependenc
   }
 
   async function generateNextSectionImpl(bookId: string, afterSectionId?: string): Promise<GenerationResult | null> {
+    // 大纲按原文区间排序，确保后台预生成始终沿阅读顺序前进。
+    // 若已有小节处于 generating 状态则本次不再启动任务；失败小节优先于新的 queued 小节重试。
     const sections = (await dependencies.repositories.listOutlineNodes(bookId)).sort((left, right) =>
       left.startOffset - right.startOffset ||
       left.endOffset - right.endOffset ||

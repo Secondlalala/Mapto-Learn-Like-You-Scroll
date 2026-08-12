@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 @router.get("/deepseek", response_model=DeepSeekSettingsOut)
 def get_deepseek_settings():
     config = get_deepseek_config()
+    # 接口只返回掩码后的密钥，设置页面能够确认已配置，但无法读取完整 API Key。
     return DeepSeekSettingsOut(
         configured=bool(config["api_key"]),
         api_key_masked=masked_key(config["api_key"]),
@@ -26,6 +27,7 @@ def update_deepseek_settings(payload: DeepSeekSettingsIn):
         "deepseek_model": payload.model,
         "deepseek_mock": payload.mock,
     }
+    # 密钥输入留空表示保留旧值，防止用户只调整模型名称时意外清空密钥。
     if payload.api_key and payload.api_key.strip():
         updates["deepseek_api_key"] = payload.api_key.strip()
     update_runtime_settings(updates)
@@ -40,6 +42,7 @@ def get_tts_settings():
 
 @router.put("/tts", response_model=TTSSettingsOut)
 def update_tts_settings(payload: TTSSettingsIn):
+    # 所有可选字段由服务层过滤 None，因此可以只提交语速等单项设置。
     update_runtime_settings(
         {
             "tts_enabled": payload.enabled,

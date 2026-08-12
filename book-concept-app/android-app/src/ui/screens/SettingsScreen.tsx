@@ -24,6 +24,8 @@ function Choice({selected, label, onPress}: {selected: boolean; label: string; o
 
 export default function SettingsScreen({dependencies, onSaved}: Props) {
   const savedKey = useRef('');
+  const ttsRef = useRef<TtsPreferences>(DEFAULT_TTS_PREFERENCES);
+  const ttsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState<string>(DEFAULT_DEEPSEEK_SETTINGS.model);
   const [temperature, setTemperature] = useState(String(DEFAULT_DEEPSEEK_SETTINGS.temperature));
@@ -49,12 +51,28 @@ export default function SettingsScreen({dependencies, onSaved}: Props) {
         setTemperature(String(deepSeek.temperature));
         setTimeoutValue(String(deepSeek.timeoutMs));
       }
+      ttsRef.current = ttsPreferences;
       setTts(ttsPreferences);
     }).catch(() => setError('设置加载失败')).finally(() => active && setLoading(false));
     return () => { active = false; };
   }, [dependencies]);
 
-  const changeSpeed = (delta: number) => setTts(current => ({...current, speed: Math.min(2, Math.max(0.2, Math.round((current.speed + delta) * 10) / 10))}));
+  const updateTts = (next: TtsPreferences) => {
+    ttsRef.current = next;
+    setTts(next);
+    setError(null);
+    setSaved(false);
+    if (ttsSaveTimer.current) {clearTimeout(ttsSaveTimer.current);}
+    ttsSaveTimer.current = setTimeout(() => {
+      dependencies.setTtsPreferences(next)
+        .then(() => setSaved(true))
+        .catch(caught => setError(caught instanceof Error ? caught.message : '语音设置保存失败'));
+    }, 250);
+  };
+  const changeSpeed = (delta: number) => updateTts({
+    ...ttsRef.current,
+    speed: Math.min(2, Math.max(0.2, Math.round((ttsRef.current.speed + delta) * 10) / 10)),
+  });
   const save = async () => {
     const parsedTemperature = Number(temperature);
     const parsedTimeout = Number(timeout);
@@ -100,9 +118,9 @@ export default function SettingsScreen({dependencies, onSaved}: Props) {
 
       <Text style={styles.sectionTitle}>语音</Text>
       <Text style={styles.label}>引擎</Text>
-      <View style={styles.choices}><Choice label="离线中文" selected={tts.engine === 'offline'} onPress={() => setTts({...tts, engine: 'offline'})} /><Choice label="系统语音" selected={tts.engine === 'system'} onPress={() => setTts({...tts, engine: 'system'})} /></View>
+      <View style={styles.choices}><Choice label="离线中文" selected={tts.engine === 'offline'} onPress={() => updateTts({...ttsRef.current, engine: 'offline'})} /><Choice label="系统语音" selected={tts.engine === 'system'} onPress={() => updateTts({...ttsRef.current, engine: 'system'})} /></View>
       <Text style={styles.label}>中文音色</Text>
-      <View style={styles.choices}><Choice label="中文女声" selected={tts.voice === 'zh-female'} onPress={() => setTts({...tts, voice: 'zh-female'})} /><Choice label="中文男声" selected={tts.voice === 'zh-male'} onPress={() => setTts({...tts, voice: 'zh-male'})} /></View>
+      <View style={styles.choices}><Choice label="中文女声" selected={tts.voice === 'zh-female'} onPress={() => updateTts({...ttsRef.current, voice: 'zh-female'})} /><Choice label="中文男声" selected={tts.voice === 'zh-male'} onPress={() => updateTts({...ttsRef.current, voice: 'zh-male'})} /></View>
       <Text style={styles.label}>语速</Text>
       <View style={styles.speedRow}><Pressable accessibilityLabel="语速降低" onPress={() => changeSpeed(-0.1)} style={styles.speedButton}><Text style={styles.speedButtonText}>−</Text></Pressable><Text style={styles.speed}>{tts.speed.toFixed(1)}×</Text><Pressable accessibilityLabel="语速增加" onPress={() => changeSpeed(0.1)} style={styles.speedButton}><Text style={styles.speedButtonText}>+</Text></Pressable></View>
 

@@ -1,6 +1,6 @@
 import {createOfflineTtsService} from '../offlineTts';
 
-function dependencies(engine: 'offline' | 'system' = 'offline') {
+function dependencies(engine: 'offline' | 'system' = 'offline', speed = 0.8) {
   const native = {
     preload: jest.fn().mockResolvedValue({modelVersion: 'sherpa-onnx-1.13.4-aishell3', sampleRate: 22050, numSpeakers: 174}),
     speakOffline: jest.fn().mockResolvedValue({cacheKey: 'cache-key', filePath: '/cache/audio.wav', cacheHit: false}),
@@ -11,7 +11,7 @@ function dependencies(engine: 'offline' | 'system' = 'offline') {
   return {
     native,
     repositories,
-    getPreferences: jest.fn().mockResolvedValue({engine, voice: 'zh-female', speed: 0.8}),
+    getPreferences: jest.fn().mockResolvedValue({engine, voice: 'zh-female', speed}),
   };
 }
 
@@ -48,4 +48,14 @@ it('uses Android system speech without writing an offline cache entry', async ()
   expect(deps.native.speakSystem).toHaveBeenCalledWith('系统语音。', 0.8);
   expect(deps.native.speakOffline).not.toHaveBeenCalled();
   expect(deps.repositories.upsertTtsCache).not.toHaveBeenCalled();
+});
+
+it('passes the latest persisted speed to native offline synthesis', async () => {
+  const deps = dependencies('offline', 1.6);
+  const service = createOfflineTtsService(deps);
+
+  await service.speak('语速测试。');
+
+  expect(deps.native.speakOffline).toHaveBeenCalledWith('语速测试。', 1.6, 33);
+  expect(deps.repositories.upsertTtsCache).toHaveBeenCalledWith(expect.objectContaining({speed: 1.6}));
 });

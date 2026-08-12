@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -18,21 +19,25 @@ CACHE_DIR = Path(__file__).resolve().parents[1] / "tts_cache"
 
 
 async def synthesize_speech(text: str, speed: float | None = None) -> tuple[bytes, str, bool]:
+    # 所有语音引擎通过同一入口调度，前端无需了解本地 worker、Sherpa 或远程协议差异。
     config = get_tts_config()
     if not config["enabled"]:
         raise TTSNotConfiguredError("TTS 未启用。")
     if config["api_style"] == "browser":
         raise TTSNotConfiguredError("当前设置为浏览器 TTS，不需要调用后端语音服务。")
 
+    # 缓存键包含引擎、音色、语速和完整文本；任一设置变化都会生成独立音频文件。
     payload = _build_payload(text, config, speed=speed)
     cache_key = _cache_key(payload, config)
     cache_path = CACHE_DIR / f"{cache_key}.wav"
+    # 命中磁盘缓存时不启动模型，直接返回已生成 WAV，显著缩短重复朗读等待。
     if cache_path.exists():
         return cache_path.read_bytes(), "audio/wav", True
 
     if config["api_style"] == "kokoro":
         from services.kokoro_worker_client import KokoroWorkerError, preload, synthesize
 
+        # Kokoro worker 在首次朗读时懒启动并预加载，之后一直复用同一模型进程。
         try:
             preload({"device": config.get("device", "auto"), "lang_code": config.get("lang_code", "z")})
             audio, content_type = synthesize(payload)
@@ -41,9 +46,18 @@ async def synthesize_speech(text: str, speed: float | None = None) -> tuple[byte
         _write_cache(cache_path, audio, content_type)
         return audio, content_type, False
 
+    if config["api_style"] == "sherpa":
+        from services.sherpa_tts import synthesize
+
+        # 原生推理是同步计算，放入工作线程可避免阻塞 FastAPI 事件循环。
+        audio, content_type = await asyncio.to_thread(synthesize, payload)
+        _write_cache(cache_path, audio, content_type)
+        return audio, content_type, False
+
     if not config["api_url"]:
         raise TTSNotConfiguredError("请先配置 TTS 服务地址。")
 
+    # 其余模式按兼容 HTTP 协议调用，可接收直接音频或 Base64 JSON 两种返回。
     response = await _post_tts(config, payload)
     content_type = response.headers.get("content-type", "audio/wav").split(";")[0]
     if content_type.startswith("audio/"):
@@ -65,11 +79,17 @@ async def synthesize_speech(text: str, speed: float | None = None) -> tuple[byte
 
 
 async def preload_tts() -> str:
+    # 预加载根据当前引擎分派；浏览器 TTS 无本地模型，因此直接返回说明。
     config = get_tts_config()
     if not config["enabled"]:
         raise TTSNotConfiguredError("TTS 未启用。")
     if config["api_style"] == "browser":
         return "浏览器 TTS 不需要预加载模型。"
+    if config["api_style"] == "sherpa":
+        from services.sherpa_tts import preload
+
+        loaded = await asyncio.to_thread(preload, config["voice"], config["english_voice"])
+        return f"Sherpa 原生模型已加载：{'，'.join(loaded)}。"
     if config["api_style"] != "kokoro":
         return "当前 TTS 服务不是 Kokoro，本地预加载已跳过。"
 
@@ -87,6 +107,7 @@ async def preload_tts() -> str:
 
 
 def _build_payload(text: str, config: dict, speed: float | None = None) -> dict:
+    # 在后端再次钳制语速，防止绕过前端控件提交异常值影响模型稳定性。
     clean_text = text.strip()
     resolved_speed = _clamp_speed(speed if speed is not None else config.get("speed", 0.8))
     if config["api_style"] == "openai":
@@ -111,6 +132,7 @@ def _build_payload(text: str, config: dict, speed: float | None = None) -> dict:
 
 
 def _clamp_speed(value: float | str | None) -> float:
+    # 合法范围统一为 0.2 至 2.0；解析失败时回到产品默认值 0.8。
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -120,6 +142,7 @@ def _clamp_speed(value: float | str | None) -> float:
 
 async def _post_tts(config: dict, payload: dict, path: str | None = None) -> httpx.Response:
     url = _service_url(config, path)
+    # 本机 TTS 不继承系统代理，避免 127.0.0.1 请求被代理软件转发后失效。
     async with httpx.AsyncClient(timeout=90, trust_env=False) as client:
         try:
             response = await client.post(url, json=payload)
@@ -140,12 +163,14 @@ def _service_url(config: dict, path: str | None) -> str:
 
 
 def _cache_key(payload: dict, config: dict) -> str:
+    # JSON 键排序后计算 SHA-256，得到稳定且不暴露原文内容的缓存文件名。
     material = {"style": config.get("api_style"), "url": config.get("api_url"), "payload": payload}
     raw = json.dumps(material, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
 def _write_cache(cache_path: Path, audio: bytes, content_type: str) -> None:
+    # 只缓存非空音频响应，错误页或空结果不会污染后续朗读。
     if not audio or not content_type.startswith("audio/"):
         return
     CACHE_DIR.mkdir(exist_ok=True)

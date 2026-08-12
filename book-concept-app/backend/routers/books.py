@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api/books", tags=["books"])
 
 @router.get("", response_model=list[BookOut])
 def list_books(db: Session = Depends(get_db)):
+    # 书籍表不冗余保存卡片总数，列表查询时按 book_id 统计，避免生成失败造成计数漂移。
     books = db.query(Book).order_by(Book.created_at.desc()).all()
     result = []
     for book in books:
@@ -37,6 +38,7 @@ def get_outline(book_id: int, db: Session = Depends(get_db)):
     book = db.get(Book, book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在。")
+    # 大纲同时返回每节生成状态和卡片数，供阅读页显示后台生成进度。
     cards = db.query(ConceptCard).filter(ConceptCard.book_id == book.id).all()
     return build_outline(book, cards)
 
@@ -50,8 +52,10 @@ async def generate_cards(
     book = db.get(Book, book_id)
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在。")
+    # 单次请求只处理一个小节，既缩短 DeepSeek 等待时间，也让断点游标及时落库。
     try:
         generated, done, cursor, total_sections = await generate_cards_for_book(db, book, force=force)
+    # 配置问题、上游服务问题和未知程序错误使用不同状态码，前端可以给出准确提示。
     except DeepSeekNotConfiguredError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

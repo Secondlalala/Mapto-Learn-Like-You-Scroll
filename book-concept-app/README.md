@@ -7,7 +7,7 @@
 - 前端：React + Vite + Tailwind CSS + Framer Motion + KaTeX
 - 后端：FastAPI + SQLite + SQLAlchemy
 - AI：DeepSeek Chat Completions API
-- 语音：本地 Kokoro-82M 服务，失败时回退浏览器 TTS
+- 语音：本地 Kokoro-82M、Sherpa 原生中英文或浏览器 TTS
 
 ## 启动
 
@@ -38,6 +38,16 @@ npm run dev
 ```
 
 打开：http://localhost:5173
+
+## 桌面启停控制
+
+运行下面的安装脚本会在桌面创建 `MapToLearn 启停控制` 快捷方式：
+
+```powershell
+& .\scripts\install_desktop_controller.ps1
+```
+
+双击快捷方式可以查看前后端状态、启动应用、关闭应用或打开网页。运行日志保存在 `%LOCALAPPDATA%\MapToLearn\logs`。
 
 ## DeepSeek 设置
 
@@ -85,6 +95,19 @@ cd backend
 ```
 
 Kokoro 服务状态页 `http://127.0.0.1:9977/health` 中如果看到 `resolved_auto_device` 为 `cuda`，就表示朗读推理会走 GPU。
+
+## Sherpa 原生中英文语音
+
+设置中的“Sherpa 原生中英文”使用 sherpa-onnx 在本机执行 ONNX 推理，不依赖 PyTorch 或独立 TTS 服务。中文默认使用 `zh_CN-xiao_ya-medium`，英文使用 `en_US-lessac-medium`，混合文本会自动分段、分别合成并拼接。
+
+首次使用前安装依赖：
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pip install -r requirements-sherpa.txt
+```
+
+然后在网页设置中选择“Sherpa 原生中英文”，点击“下载并加载 Sherpa 模型”。模型保存到 `backend/tts_models/sherpa/`，下载完成后可完全离线使用。模型和合成缓存不会提交到 Git。
 
 ## API
 

@@ -24,6 +24,8 @@ a = Analysis(
         "routers.tts",
         "routers.upload",
         "services.kokoro_worker",
+        "services.sherpa_tts",
+        "sherpa_onnx",
         "uvicorn.logging",
         "uvicorn.loops",
         "uvicorn.loops.auto",

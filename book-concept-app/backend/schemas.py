@@ -30,6 +30,17 @@ class DatabaseImportOut(BaseModel):
     message: str
 
 
+class BookDeleteIn(BaseModel):
+    confirmation_title: str
+
+
+class BookDeleteOut(BaseModel):
+    book_id: int
+    deleted_cards: int
+    deleted_messages: int
+    message: str
+
+
 class GenerateCardsOut(BaseModel):
     book_id: int
     generated: int

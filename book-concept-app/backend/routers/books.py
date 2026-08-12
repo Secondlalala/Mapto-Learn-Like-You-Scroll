@@ -1,9 +1,11 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Book, ConceptCard
-from schemas import BookOut, GenerateCardsOut, GenerationJobOut, OutlineItemOut
+from models import Book, ChatMessage, ConceptCard, GenerationJob
+from schemas import BookDeleteIn, BookDeleteOut, BookOut, GenerateCardsOut, GenerationJobOut, OutlineItemOut
 from services.card_generator import build_outline
 from services.deepseek_client import DeepSeekNotConfiguredError
 from services.generation_manager import generation_manager
@@ -32,6 +34,53 @@ def get_book(book_id: int, db: Session = Depends(get_db)):
     data = BookOut.model_validate(book)
     data.card_count = db.query(ConceptCard).filter(ConceptCard.book_id == book.id).count()
     return data
+
+
+@router.delete("/{book_id}", response_model=BookDeleteOut)
+def delete_book(book_id: int, payload: BookDeleteIn, db: Session = Depends(get_db)):
+    book = db.get(Book, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在。")
+    if payload.confirmation_title != book.title:
+        raise HTTPException(status_code=400, detail="确认书名与当前书籍不一致。")
+
+    active_jobs = (
+        db.query(GenerationJob)
+        .filter(GenerationJob.status.in_(("queued", "running")))
+        .all()
+    )
+    if any(_job_contains_book(job, book_id) for job in active_jobs):
+        raise HTTPException(status_code=409, detail="本书正在后台生成，请先暂停任务或等待任务完成。")
+
+    card_ids = [
+        row[0]
+        for row in db.query(ConceptCard.id).filter(ConceptCard.book_id == book_id).all()
+    ]
+    try:
+        deleted_messages = 0
+        if card_ids:
+            deleted_messages = (
+                db.query(ChatMessage)
+                .filter(ChatMessage.card_id.in_(card_ids))
+                .delete(synchronize_session=False)
+            )
+        deleted_cards = (
+            db.query(ConceptCard)
+            .filter(ConceptCard.book_id == book_id)
+            .delete(synchronize_session=False)
+        )
+        db.delete(book)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return BookDeleteOut(
+        book_id=book_id,
+        deleted_cards=deleted_cards,
+        deleted_messages=deleted_messages,
+        message=f"已删除《{book.title}》及其全部学习数据。",
+    )
 
 
 @router.get("/{book_id}/outline", response_model=list[OutlineItemOut])
@@ -92,3 +141,19 @@ async def generate_cards(
         cursor=cursor,
         total_sections=total_sections,
     )
+
+
+def _job_contains_book(job: GenerationJob, book_id: int) -> bool:
+    try:
+        parsed = json.loads(job.book_ids_json or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(parsed, list):
+        return False
+    for value in parsed:
+        try:
+            if int(value) == book_id:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False

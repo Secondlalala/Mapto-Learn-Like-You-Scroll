@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Book, ConceptCard
-from schemas import BookOut, GenerateCardsOut, OutlineItemOut
+from schemas import BookOut, GenerateCardsOut, GenerationJobOut, OutlineItemOut
 from services.card_generator import build_outline
 from services.deepseek_client import DeepSeekNotConfiguredError
 from services.generation_manager import generation_manager
@@ -42,6 +42,20 @@ def get_outline(book_id: int, db: Session = Depends(get_db)):
     # 大纲同时返回每节生成状态和卡片数，供阅读页显示后台生成进度。
     cards = db.query(ConceptCard).filter(ConceptCard.book_id == book.id).all()
     return build_outline(book, cards)
+
+
+@router.post("/{book_id}/generation-job", response_model=GenerationJobOut)
+async def generate_entire_book(book_id: int, db: Session = Depends(get_db)):
+    # 单书批量生成始终从本书现有游标继续，不使用 force，也不会清理已完成卡片。
+    book = db.get(Book, book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在。")
+    job_id = generation_manager.create_job("single_book", [book.id])
+    await generation_manager.ensure_worker()
+    job = generation_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=500, detail="创建生成任务后无法读取任务状态。")
+    return GenerationJobOut.model_validate(job)
 
 
 @router.post("/{book_id}/generate-cards", response_model=GenerateCardsOut)

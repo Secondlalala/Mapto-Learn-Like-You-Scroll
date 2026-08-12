@@ -31,6 +31,24 @@ class GenerateCardsOut(BaseModel):
     total_sections: int = 0
 
 
+class GenerationJobOut(BaseModel):
+    id: int
+    scope: str
+    book_ids_json: str
+    status: str
+    current_book_id: int | None = None
+    current_book_position: int = 0
+    processed_sections: int = 0
+    total_sections: int = 0
+    generated_cards: int = 0
+    message: str = ""
+    error: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ConceptCardOut(BaseModel):
     # 数据库中的三个 JSON 文本列表在服务层还原后，以强类型数组交给前端。
     id: int

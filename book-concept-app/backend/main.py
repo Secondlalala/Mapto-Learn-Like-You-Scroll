@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from database import init_db
-from routers import books, cards, chat, settings as settings_router, tts, upload
+from routers import books, cards, chat, exports, generation_jobs, settings as settings_router, tts, upload
 from services.generation_manager import generation_manager
 from services.kokoro_manager import start_kokoro_if_enabled
 
@@ -45,6 +45,8 @@ def health():
 
 app.include_router(upload.router)
 app.include_router(books.router)
+app.include_router(generation_jobs.router)
+app.include_router(exports.router)
 app.include_router(cards.router)
 app.include_router(chat.router)
 app.include_router(settings_router.router)

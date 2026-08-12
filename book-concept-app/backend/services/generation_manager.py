@@ -89,6 +89,29 @@ class GenerationManager:
             finally:
                 db.close()
 
+    def get_job(self, job_id: int) -> GenerationJob | None:
+        db = self._session_factory()
+        try:
+            job = db.get(GenerationJob, job_id)
+            if job:
+                db.expunge(job)
+            return job
+        finally:
+            db.close()
+
+    def get_current_job(self) -> GenerationJob | None:
+        # 优先展示仍可操作的任务；全部结束后才展示最近一次结果，便于用户确认完成情况。
+        db = self._session_factory()
+        try:
+            job = self._find_active_job(db)
+            if not job:
+                job = db.query(GenerationJob).order_by(GenerationJob.id.desc()).first()
+            if job:
+                db.expunge(job)
+            return job
+        finally:
+            db.close()
+
     def recover_interrupted_jobs(self) -> None:
         # 进程重启不会重放未知状态的网络调用；保留进度并显式交给用户继续。
         with self._job_lock:

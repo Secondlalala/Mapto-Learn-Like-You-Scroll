@@ -28,6 +28,33 @@ async function requestBlob(path, options = {}) {
   return response.blob();
 }
 
+async function downloadDatabase(path, fallbackFilename) {
+  // 数据库导出仍由后端鉴权和生成快照；浏览器这里只负责把已完成的响应交给系统下载目录。
+  const response = await fetch(`${API_BASE}${path}`);
+  if (!response.ok) {
+    const text = await response.text();
+    let detail = "导出失败";
+    try {
+      detail = JSON.parse(text)?.detail || detail;
+    } catch {
+      detail = text || detail;
+    }
+    throw new Error(detail);
+  }
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get("content-disposition") || "";
+  const filename = contentDisposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  return filename;
+}
+
 export const api = {
   // 页面组件只调用语义化方法，不在各处重复拼接路径、请求头和序列化规则。
   listBooks: () => request("/api/books"),
@@ -40,6 +67,13 @@ export const api = {
   },
   generateCards: (bookId, { force = false } = {}) =>
     request(`/api/books/${bookId}/generate-cards?force=${force ? "true" : "false"}`, { method: "POST" }),
+  startAllBooksGeneration: () => request("/api/generation-jobs/all-books", { method: "POST" }),
+  startBookGeneration: (bookId) => request(`/api/books/${bookId}/generation-job`, { method: "POST" }),
+  getCurrentGenerationJob: () => request("/api/generation-jobs/current"),
+  pauseGenerationJob: (jobId) => request(`/api/generation-jobs/${jobId}/pause`, { method: "POST" }),
+  resumeGenerationJob: (jobId) => request(`/api/generation-jobs/${jobId}/resume`, { method: "POST" }),
+  downloadApplicationDatabase: () => downloadDatabase("/api/exports/app-database", "maptolearn-app.db"),
+  downloadBookDatabase: (bookId) => downloadDatabase(`/api/books/${bookId}/export-database`, `maptolearn-book-${bookId}.db`),
   getOutline: (bookId) => request(`/api/books/${bookId}/outline`),
   listCards: (bookId) => request(`/api/books/${bookId}/cards`),
   toggleFavorite: (cardId) => request(`/api/cards/${cardId}/favorite`, { method: "POST" }),

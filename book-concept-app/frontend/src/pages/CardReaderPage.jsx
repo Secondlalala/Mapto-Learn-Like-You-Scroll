@@ -5,7 +5,7 @@ import ConceptCard from "../components/ConceptCard";
 import ChatPanel from "../components/ChatPanel";
 import OutlineTree from "../components/OutlineTree";
 
-export default function CardReaderPage({ bookId }) {
+export default function CardReaderPage({ bookId, targetCardId }) {
   const [cards, setCards] = useState([]);
   const [outline, setOutline] = useState([]);
   const [active, setActive] = useState(0);
@@ -31,27 +31,28 @@ export default function CardReaderPage({ bookId }) {
   };
 
   useEffect(() => {
-    // 切换书籍时重置一次性恢复标记和预取防重标记，不能沿用上一册的状态。
+    // 切换书籍或指定跳转卡片时重置一次性恢复标记，不能沿用上一次阅读入口。
     restoredRef.current = false;
     requestedCursorRef.current = null;
     setGenerationStatus("");
     setAutoPrefetch(localStorage.getItem(autoPrefetchKey) !== "false");
     load().catch((err) => setError(err.message));
-  }, [bookId, autoPrefetchKey]);
+  }, [bookId, targetCardId, autoPrefetchKey]);
 
   useEffect(() => {
     if (restoredRef.current || !cards.length) return;
-    // 卡片首次加载完成后只恢复一次阅读位置。
-    // 优先按 cardId 定位可抵抗后台新增卡片导致的索引变化；找不到旧卡片时再回退到保存的 index。
+    // 指定卡片入口优先于历史进度；找不到目标才按已保存 cardId 和索引恢复。
+    // 按 cardId 而非索引定位，可抵抗后台新增卡片导致的列表顺序变化。
     restoredRef.current = true;
     const saved = readProgress(progressKey);
+    const targetIndex = cards.findIndex((card) => card.id === Number(targetCardId));
     const savedIndex = cards.findIndex((card) => card.id === saved.cardId);
-    const nextActive = savedIndex >= 0 ? savedIndex : Math.min(saved.index || 0, cards.length - 1);
+    const nextActive = targetIndex >= 0 ? targetIndex : savedIndex >= 0 ? savedIndex : Math.min(saved.index || 0, cards.length - 1);
     setActive(nextActive);
     requestAnimationFrame(() => {
       cardRefs.current[cards[nextActive]?.id]?.scrollIntoView({ behavior: "auto", block: "start" });
     });
-  }, [cards, progressKey]);
+  }, [cards, progressKey, targetCardId]);
 
   useEffect(() => {
     const activeCard = cards[active];

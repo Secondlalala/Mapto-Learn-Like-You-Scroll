@@ -77,15 +77,17 @@ export default function App() {
               setRoute({ name: "book", bookId });
             }}
             onOpenBook={(bookId) => setRoute({ name: "book", bookId })}
+            onBooksChanged={refreshBooks}
           />
         )}
         {route.name === "book" && (
           <BookPage
             bookId={route.bookId}
-            onRead={(bookId) => setRoute({ name: "reader", bookId })}
+            onRead={(bookId, targetCardId) => setRoute({ name: "reader", bookId, targetCardId })}
+            onBooksChanged={refreshBooks}
           />
         )}
-        {route.name === "reader" && <CardReaderPage bookId={route.bookId} />}
+        {route.name === "reader" && <CardReaderPage bookId={route.bookId} targetCardId={route.targetCardId} />}
       </div>
 
       <DeepSeekSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />

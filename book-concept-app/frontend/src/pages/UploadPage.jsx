@@ -1,11 +1,16 @@
 import { useState } from "react";
-import { FileText } from "lucide-react";
+import { Database, FileText, Sparkles } from "lucide-react";
 import { api } from "../api/client";
+import GenerationJobStatus from "../components/GenerationJobStatus";
 import UploadBox from "../components/UploadBox";
+import useGenerationJob from "../hooks/useGenerationJob";
 
-export default function UploadPage({ books, onUploaded, onOpenBook }) {
+export default function UploadPage({ books, onUploaded, onOpenBook, onBooksChanged }) {
   const [busy, setBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const generation = useGenerationJob({ onProgress: onBooksChanged });
 
   const upload = async (file) => {
     // busy 同时禁止重复选择文件；无论成功失败都在 finally 中恢复可操作状态。
@@ -19,6 +24,44 @@ export default function UploadPage({ books, onUploaded, onOpenBook }) {
       setError(err.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const startAllBooks = async () => {
+    setActionBusy(true);
+    setError("");
+    try {
+      const job = await generation.startAllBooks();
+      setMessage(job.status === "completed" ? "当前书库没有待生成的小节。" : "已加入全应用后台生成队列。可继续浏览或阅读。");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const downloadApplicationDatabase = async () => {
+    setActionBusy(true);
+    setError("");
+    try {
+      const filename = await api.downloadApplicationDatabase();
+      setMessage(`已开始下载 ${filename}，包含应用内全部书籍、卡片、收藏与追问记录。`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const pauseOrResume = async (action) => {
+    setActionBusy(true);
+    setError("");
+    try {
+      await action();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionBusy(false);
     }
   };
 
@@ -36,8 +79,40 @@ export default function UploadPage({ books, onUploaded, onOpenBook }) {
       </div>
 
       <aside className="py-2">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-normal text-stone-500">已上传书籍</h2>
-        <div className="space-y-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-normal text-stone-500">已上传书籍</h2>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="inline-flex h-9 items-center gap-2 border border-stone-300 bg-white px-3 text-sm font-medium hover:bg-stone-50 disabled:opacity-50"
+              onClick={startAllBooks}
+              disabled={actionBusy || generation.isRunning || !books.length}
+              title="从所有书籍各自保存的进度继续，依次生成剩余小节"
+            >
+              <Sparkles size={15} />
+              生成全部书籍
+            </button>
+            <button
+              className="inline-flex h-9 items-center gap-2 border border-stone-300 bg-white px-3 text-sm font-medium hover:bg-stone-50 disabled:opacity-50"
+              onClick={downloadApplicationDatabase}
+              disabled={actionBusy}
+              title="导出完整 app.db，包含全部书籍和学习记录"
+            >
+              <Database size={15} />
+              导出全部应用数据库
+            </button>
+          </div>
+        </div>
+        <p className="mb-3 text-xs leading-5 text-stone-500">全应用生成按书籍顺序从各自进度继续；导出的 `.db` 包含应用内全部书籍、卡片、收藏和追问记录。</p>
+        <GenerationJobStatus
+          job={generation.job}
+          bookTitle={books.find((book) => book.id === generation.job?.current_book_id)?.title}
+          onPause={() => pauseOrResume(generation.pause)}
+          onResume={() => pauseOrResume(generation.resume)}
+          actionBusy={actionBusy}
+        />
+        {generation.error && <p className="mt-3 text-sm text-red-700">{generation.error}</p>}
+        {message && <p className="mt-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700">{message}</p>}
+        <div className="mt-3 space-y-3">
           {books.map((book) => (
             <button
               key={book.id}

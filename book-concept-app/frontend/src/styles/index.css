@@ -27,3 +27,15 @@ textarea {
   scroll-snap-align: start;
 }
 
+.generation-progress {
+  background: #e7e5e4;
+  height: 6px;
+  overflow: hidden;
+}
+
+.generation-progress > span {
+  display: block;
+  height: 100%;
+  background: #2563eb;
+  transition: width 180ms ease;
+}

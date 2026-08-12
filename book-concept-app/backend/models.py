@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -68,3 +68,26 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     card: Mapped[ConceptCard] = relationship(back_populates="messages")
+
+
+class GenerationJob(Base):
+    # 应用始终只运行一个生成队列；任务状态落库后，即使关闭网页也能继续查看进度。
+    __tablename__ = "generation_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    scope: Mapped[str] = mapped_column(String(30))
+    book_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    current_book_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_book_position: Mapped[int] = mapped_column(Integer, default=0)
+    processed_sections: Mapped[int] = mapped_column(Integer, default=0)
+    total_sections: Mapped[int] = mapped_column(Integer, default=0)
+    generated_cards: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

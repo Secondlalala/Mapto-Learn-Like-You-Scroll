@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Database, Loader2, Play, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, Database, Loader2, Play, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { api } from "../api/client";
+import DeleteBookDialog from "../components/DeleteBookDialog";
 import GenerationJobStatus from "../components/GenerationJobStatus";
 import useGenerationJob from "../hooks/useGenerationJob";
 
-export default function BookPage({ bookId, onRead, onBooksChanged }) {
+export default function BookPage({ bookId, onRead, onBooksChanged, onDeleted }) {
   const [book, setBook] = useState(null);
   const [cards, setCards] = useState([]);
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const load = async () => {
     // 书籍元数据和卡片列表并行加载，页面标题、数量和按钮状态保持同一批数据。
@@ -86,6 +90,20 @@ export default function BookPage({ bookId, onRead, onBooksChanged }) {
     }
   };
 
+  const deleteCurrentBook = async (confirmationTitle) => {
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await api.deleteBook(bookId, confirmationTitle);
+      localStorage.removeItem(`reader-progress-${bookId}`);
+      await onDeleted?.(bookId);
+    } catch (err) {
+      setDeleteError(err.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   if (!book) {
     return <div className="mx-auto max-w-4xl px-4 py-12 text-stone-500">加载中...</div>;
   }
@@ -141,6 +159,18 @@ export default function BookPage({ bookId, onRead, onBooksChanged }) {
             导出本书数据库
           </button>
           <button
+            className="inline-flex h-10 items-center gap-2 rounded-md border border-red-300 bg-white px-4 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+            onClick={() => {
+              setDeleteError("");
+              setDeleteOpen(true);
+            }}
+            disabled={deleteBusy}
+            title="仅删除当前书籍及其卡片、收藏和追问记录"
+          >
+            <Trash2 size={16} />
+            删除本书数据库
+          </button>
+          <button
             className="inline-flex h-10 items-center gap-2 rounded-md bg-stone-900 px-4 text-sm font-medium text-white disabled:opacity-50"
             onClick={() => onRead(bookId)}
             disabled={!cards.length}
@@ -194,6 +224,20 @@ export default function BookPage({ bookId, onRead, onBooksChanged }) {
           </button>
         ))}
       </div>
+
+      <DeleteBookDialog
+        open={deleteOpen}
+        book={book}
+        cardCount={cards.length}
+        busy={deleteBusy}
+        error={deleteError}
+        onClose={() => {
+          if (deleteBusy) return;
+          setDeleteOpen(false);
+          setDeleteError("");
+        }}
+        onConfirm={deleteCurrentBook}
+      />
     </section>
   );
 }

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Database, FileText, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
+import { Database, FileText, Sparkles, Upload } from "lucide-react";
 import { api } from "../api/client";
 import GenerationJobStatus from "../components/GenerationJobStatus";
 import UploadBox from "../components/UploadBox";
@@ -10,6 +10,7 @@ export default function UploadPage({ books, onUploaded, onOpenBook, onBooksChang
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const databaseInputRef = useRef(null);
   const generation = useGenerationJob({ onProgress: onBooksChanged });
 
   const upload = async (file) => {
@@ -53,6 +54,27 @@ export default function UploadPage({ books, onUploaded, onOpenBook, onBooksChang
     }
   };
 
+  const importDatabase = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setActionBusy(true);
+    setError("");
+    setMessage("正在校验并导入数据库...");
+    try {
+      const data = await api.importDatabase(file);
+      await onBooksChanged?.();
+      setMessage(
+        `导入完成：新增 ${data.imported_books} 本书、${data.imported_cards} 张卡片和 ${data.imported_messages} 条追问。原有书库未被覆盖。`,
+      );
+    } catch (err) {
+      setError(err.message);
+      setMessage("");
+    } finally {
+      setActionBusy(false);
+      event.target.value = "";
+    }
+  };
+
   const pauseOrResume = async (action) => {
     setActionBusy(true);
     setError("");
@@ -82,6 +104,22 @@ export default function UploadPage({ books, onUploaded, onOpenBook, onBooksChang
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold uppercase tracking-normal text-stone-500">已上传书籍</h2>
           <div className="flex flex-wrap gap-2">
+            <input
+              ref={databaseInputRef}
+              className="hidden"
+              type="file"
+              accept=".db,.sqlite,.sqlite3"
+              onChange={importDatabase}
+            />
+            <button
+              className="inline-flex h-9 items-center gap-2 border border-stone-300 bg-white px-3 text-sm font-medium hover:bg-stone-50 disabled:opacity-50"
+              onClick={() => databaseInputRef.current?.click()}
+              disabled={actionBusy}
+              title="导入独立卡片数据库；每次导入都创建新书，不覆盖现有内容"
+            >
+              <Upload size={15} />
+              导入卡片数据库
+            </button>
             <button
               className="inline-flex h-9 items-center gap-2 border border-stone-300 bg-white px-3 text-sm font-medium hover:bg-stone-50 disabled:opacity-50"
               onClick={startAllBooks}
@@ -102,7 +140,7 @@ export default function UploadPage({ books, onUploaded, onOpenBook, onBooksChang
             </button>
           </div>
         </div>
-        <p className="mb-3 text-xs leading-5 text-stone-500">全应用生成按书籍顺序从各自进度继续；导出的 `.db` 包含应用内全部书籍、卡片、收藏和追问记录。</p>
+        <p className="mb-3 text-xs leading-5 text-stone-500">导入数据库会新增独立书籍副本，不覆盖现有内容；导出的 `.db` 包含应用内全部书籍、卡片、收藏和追问记录。</p>
         <GenerationJobStatus
           job={generation.job}
           bookTitle={books.find((book) => book.id === generation.job?.current_book_id)?.title}

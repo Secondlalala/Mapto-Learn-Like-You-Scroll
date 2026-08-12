@@ -65,6 +65,17 @@ export const api = {
     body.append("file", file);
     return request("/api/upload", { method: "POST", body });
   },
+  importDatabase: (file) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request("/api/imports/database", { method: "POST", body });
+  },
+  deleteBook: (bookId, confirmationTitle) =>
+    request(`/api/books/${bookId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation_title: confirmationTitle }),
+    }),
   generateCards: (bookId, { force = false } = {}) =>
     request(`/api/books/${bookId}/generate-cards?force=${force ? "true" : "false"}`, { method: "POST" }),
   startAllBooksGeneration: () => request("/api/generation-jobs/all-books", { method: "POST" }),

@@ -85,6 +85,11 @@ export default function App() {
             bookId={route.bookId}
             onRead={(bookId, targetCardId) => setRoute({ name: "reader", bookId, targetCardId })}
             onBooksChanged={refreshBooks}
+            onDeleted={async (bookId) => {
+              localStorage.removeItem(`reader-progress-${bookId}`);
+              await refreshBooks();
+              setRoute({ name: "upload" });
+            }}
           />
         )}
         {route.name === "reader" && <CardReaderPage bookId={route.bookId} targetCardId={route.targetCardId} />}
